@@ -1,94 +1,100 @@
 """
-Chat API routes for interacting with the BizGenie agent.
+Chat API: fetch business, run RAG answer, return reply.
 """
+from __future__ import annotations
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import Dict, Any
-import structlog
+
+from app.agents.graph import run_agent
 from app.database import get_db
 from app.models import Business, Lead
 from app.schemas import ChatRequest, ChatResponse
-from app.agents.graph import run_agent
+from app.config import get_settings
+from app.tools.whatsapp_mcp import send_whatsapp_message
+from app.tools.email_mcp import send_email
 
 logger = structlog.get_logger(__name__)
-
 router = APIRouter(prefix="/chat", tags=["chat"])
+settings = get_settings()
+
+
+async def notify_new_lead(business: Business, lead_name: str, initial_message: str) -> None:
+    summary = (
+        f"New chat lead for {business.name}:\n"
+        f"Name: {lead_name}\n"
+        f"Message: {initial_message[:200]}"
+    )
+
+    if settings.EMAIL_MCP_ENABLED and business.contact_email:
+        try:
+            result = await send_email(
+                to=business.contact_email,
+                subject=f"New Lead from {lead_name}",
+                body=summary,
+            )
+            logger.info("chat.lead_email_notification", result=result)
+        except Exception as exc:
+            logger.warning("chat.lead_email_failed", error=str(exc))
+
+    if settings.WHATSAPP_MCP_ENABLED and business.contact_phone:
+        try:
+            result = await send_whatsapp_message(
+                to=business.contact_phone,
+                message=summary,
+            )
+            logger.info("chat.lead_whatsapp_notification", result=result)
+        except Exception as exc:
+            logger.warning("chat.lead_whatsapp_failed", error=str(exc))
+
+
+def _business_context(biz: Business) -> dict:
+    return {
+        "id": biz.id,
+        "name": biz.name,
+        "description": biz.description,
+        "services": biz.services or [],
+        "working_hours": biz.working_hours or {},
+        "contact_email": biz.contact_email,
+        "contact_phone": biz.contact_phone,
+    }
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(
-    request: ChatRequest,
-    db: Session = Depends(get_db)
-) -> ChatResponse:
-    """
-    Chat endpoint for interacting with the BizGenie agent.
-    
-    Args:
-        request: Chat request with business_id, user_name, and user_message
-        db: Database session
-    
-    Returns:
-        Chat response with reply and tool actions
-    """
-    try:
-        # Get business
-        business = db.query(Business).filter(Business.id == request.business_id).first()
-        if not business:
-            raise HTTPException(status_code=404, detail="Business not found")
-        
-        # Prepare business context
-        business_context = {
-            "id": business.id,
-            "name": business.name,
-            "description": business.description,
-            "services": business.services or [],
-            "working_hours": business.working_hours or {},
-            "contact_email": business.contact_email,
-            "contact_phone": business.contact_phone
-        }
-        
-        # Run agent
-        result = run_agent(
-            user_message=request.user_message,
-            user_name=request.user_name,
-            business_id=request.business_id,
-            business_context=business_context,
-            conversation_id=request.conversation_id or ""
-        )
-        
-        # Create lead if this is a new conversation
-        if not request.conversation_id:
-            try:
-                lead = Lead(
-                    business_id=request.business_id,
-                    name=request.user_name,
-                    source="chat",
-                    notes=f"Initial message: {request.user_message[:200]}"
-                )
-                db.add(lead)
-                db.commit()
-                logger.info("Lead created", business_id=request.business_id, lead_id=lead.id)
-            except Exception as e:
-                logger.warning("Failed to create lead", error=str(e))
-                db.rollback()
-        
-        logger.info(
-            "Chat request processed",
-            business_id=request.business_id,
-            user_name=request.user_name,
-            intent=result.get("intent")
-        )
-        
-        return ChatResponse(
-            reply=result["reply"],
-            tool_actions=result["tool_actions"],
-            conversation_id=result["conversation_id"],
-            intent=result.get("intent")
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error processing chat request", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
+    business = db.query(Business).filter(Business.id == request.business_id).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
 
+    # Ensure each new conversation creates a lead entry (optional but helpful)
+    if not request.conversation_id:
+        lead = Lead(
+            business_id=business.id,
+            name=request.user_name,
+            source="chat",
+            notes=f"Initial message: {request.user_message[:200]}",
+        )
+        db.add(lead)
+        db.commit()
+        logger.info("chat.lead_created", business_id=business.id, lead_id=lead.id)
+        await notify_new_lead(business, request.user_name, request.user_message)
+
+    agent_result = run_agent(
+        business_id=business.id,
+        user_message=request.user_message,
+        business_context=_business_context(business),
+    )
+
+    logger.info(
+        "chat.response_ready",
+        business_id=business.id,
+        documents_used=agent_result["documents_used"],
+    )
+
+    return ChatResponse(
+        reply=agent_result["reply"],
+        conversation_id=request.conversation_id or f"conv_{business.id}",
+        tool_actions=[],
+        intent=None,
+    )

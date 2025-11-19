@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Upload, X, FileText, Loader2 } from 'lucide-react';
 import { businessApi } from '../services/api';
+import { getApiErrorMessage } from '../utils/errors';
 
 interface DocumentUploadProps {
   businessId: number;
@@ -40,7 +41,7 @@ export default function DocumentUpload({ businessId, onUploaded, onCancel }: Doc
     setSuccess(false);
 
     try {
-      const result = await businessApi.uploadDocument(businessId, file);
+      await businessApi.uploadDocument(businessId, file);
       setUploadedFileName(file.name);
       setFile(null);
       setSuccess(true);
@@ -49,36 +50,9 @@ export default function DocumentUpload({ businessId, onUploaded, onCancel }: Doc
       setTimeout(() => {
         onUploaded();
       }, 1500);
-    } catch (err: any) {
-      console.error('Upload error:', err);
-      
-      // Handle Pydantic validation errors (array of error objects)
-      let errorMessage = 'Failed to upload document. Please try again.';
-      
-      if (err.response?.data) {
-        const errorData = err.response.data;
-        
-        // If detail is an array (Pydantic validation errors)
-        if (Array.isArray(errorData.detail)) {
-          const errors = errorData.detail.map((e: any) => {
-            const field = e.loc?.join('.') || 'field';
-            return `${field}: ${e.msg}`;
-          });
-          errorMessage = errors.join('; ');
-        } 
-        // If detail is a string
-        else if (typeof errorData.detail === 'string') {
-          errorMessage = errorData.detail;
-        }
-        // If detail is an object, try to stringify it
-        else if (errorData.detail && typeof errorData.detail === 'object') {
-          errorMessage = JSON.stringify(errorData.detail);
-        }
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
+    } catch (error: unknown) {
+      console.error('Upload error:', error);
+      setError(getApiErrorMessage(error, 'Failed to upload document. Please try again.'));
       setSuccess(false);
     } finally {
       setUploading(false);

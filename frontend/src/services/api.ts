@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Business, BusinessCreate, Document, ChatRequest, ChatResponse } from '../types';
+import type { Business, BusinessCreate, Document, ChatRequest, ChatResponse, BusinessLoginPayload } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -44,6 +44,11 @@ api.interceptors.response.use(
 export const businessApi = {
   register: async (data: BusinessCreate): Promise<Business> => {
     const response = await api.post<Business>('/business/register', data);
+    return response.data;
+  },
+
+  login: async (payload: BusinessLoginPayload): Promise<Business> => {
+    const response = await api.post<Business>('/business/login', payload);
     return response.data;
   },
 

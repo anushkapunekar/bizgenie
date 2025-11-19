@@ -1,83 +1,83 @@
 """
-RAG node for answering questions using document retrieval.
+Minimal RAG node: always query vector store, always answer with docs if present.
 """
-from typing import Dict, Any, List
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
 import structlog
-from app.rag.vectorstore import vector_store
+
 from app.llm_service import llm_service
+from app.rag.vectorstore import vector_store
 
 logger = structlog.get_logger(__name__)
 
 
-def rag_query(user_message: str, business_id: int, n_results: int = 3) -> str:
-    """
-    Query RAG system and generate answer.
-    
-    Args:
-        user_message: User's question
-        business_id: Business identifier
-        n_results: Number of documents to retrieve
-    
-    Returns:
-        Generated answer based on retrieved documents
-    """
-    try:
-        # Query vector store
-        relevant_docs = vector_store.query_documents(
-            business_id=business_id,
-            query=user_message,
-            n_results=n_results
-        )
-        
-        if not relevant_docs:
-            logger.warning("No relevant documents found", business_id=business_id)
-            return "I couldn't find specific information about that in our documents. Could you please rephrase your question or contact us directly?"
-        
-        # Build context from retrieved documents
-        context = "\n\n".join([doc["text"] for doc in relevant_docs[:3]])
-        
-        # Use free LLM to generate answer from retrieved documents
-        answer = llm_service.generate(
-            prompt=user_message,
-            context=context
-        )
-        
-        logger.info(
-            "RAG query completed",
-            business_id=business_id,
-            docs_retrieved=len(relevant_docs)
-        )
-        
-        return answer
-    except Exception as e:
-        logger.error("Error in RAG query", business_id=business_id, error=str(e))
-        return "I encountered an error while searching our documents. Please try again or contact us directly."
+def _format_documents(documents: List[Dict[str, Any]]) -> str:
+    """Turn retrieved chunks into a readable block for the prompt."""
+    formatted = []
+    for idx, doc in enumerate(documents, start=1):
+        metadata = doc.get("metadata") or {}
+        source = metadata.get("filename") or metadata.get("source") or "Document"
+        chunk_text = doc.get("text", "").strip()
+        formatted.append(f"[{idx}] Source: {source}\n{chunk_text}")
+    return "\n\n".join(formatted)
 
 
-def rag_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    LangGraph node for RAG-based answering.
-    
-    Args:
-        state: Current agent state
-    
-    Returns:
-        Updated state with RAG answer
-    """
-    user_message = state.get("user_message", "")
-    business_id = state.get("business_id")
-    
-    if not business_id:
-        state["response"] = "Business context is missing. Please try again."
-        state["next_node"] = "end"
-        return state
-    
-    answer = rag_query(user_message, business_id)
-    
-    state["response"] = answer
-    state["next_node"] = "end"
-    
-    logger.info("RAG node completed", business_id=business_id)
-    
-    return state
+def _build_prompt(user_message: str, documents: List[Dict[str, Any]]) -> str:
+    if documents:
+        docs_block = _format_documents(documents)
+        prompt = (
+            "You are BizGenie, an expert assistant for small businesses.\n"
+            "Use ONLY the following document extracts to answer.\n"
+            "If the documents contradict each other, pick the most recent or most detailed section.\n\n"
+            f"{docs_block}\n\n"
+            f"User question: {user_message}\n\n"
+            "Give a concise, confident answer that cites the relevant details."
+        )
+    else:
+        prompt = (
+            "You are BizGenie, an expert assistant for small businesses.\n"
+            "No company documents matched this query, so answer using general business knowledge.\n\n"
+            f"User question: {user_message}\n\n"
+            "Provide a helpful, on-topic answer."
+        )
+    return prompt
 
+
+def generate_answer(
+    *,
+    business_id: int,
+    user_message: str,
+    n_results: int = 5,
+    metadata_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Main RAG routine. Returns dict with reply + debug info."""
+    documents = vector_store.query_documents(
+        business_id=business_id,
+        query=user_message,
+        n_results=n_results,
+    )
+    logger.info(
+        "rag.query_completed",
+        business_id=business_id,
+        results=len(documents),
+        query=user_message,
+    )
+
+    prompt = _build_prompt(user_message, documents)
+    logger.debug("rag.prompt_built", business_id=business_id, prompt_preview=prompt[:400])
+
+    response_text = llm_service.generate(prompt)
+    logger.info(
+        "rag.llm_completed",
+        business_id=business_id,
+        has_docs=bool(documents),
+        response_preview=response_text[:200],
+    )
+
+    return {
+        "reply": response_text.strip(),
+        "documents_used": len(documents),
+        "metadata_context": metadata_context or {},
+    }

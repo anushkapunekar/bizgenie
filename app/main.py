@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 from app.database import init_db
-from app.routes import chat, business
+from app.routes import chat, business, tools
 
 # Configure structured logging
 structlog.configure(
@@ -47,6 +47,7 @@ app.add_middleware(
 # Include routers
 app.include_router(chat.router)
 app.include_router(business.router)
+app.include_router(tools.router)
 
 
 @app.on_event("startup")

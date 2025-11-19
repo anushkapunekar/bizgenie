@@ -3,11 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Building2, Plus, X } from 'lucide-react';
 import { businessApi } from '../services/api';
 import type { BusinessCreate } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { getApiErrorMessage } from '../utils/errors';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 export default function BusinessRegister() {
   const navigate = useNavigate();
+  const { setActiveBusiness } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<BusinessCreate>({
@@ -43,37 +46,11 @@ export default function BusinessRegister() {
       };
 
       const business = await businessApi.register(data);
+      setActiveBusiness(business);
       navigate(`/business/${business.id}`);
-    } catch (err: any) {
-      console.error('Registration error:', err);
-      
-      // Handle Pydantic validation errors (array of error objects)
-      let errorMessage = 'Failed to register business';
-      
-      if (err.response?.data) {
-        const errorData = err.response.data;
-        
-        // If detail is an array (Pydantic validation errors)
-        if (Array.isArray(errorData.detail)) {
-          const errors = errorData.detail.map((e: any) => {
-            const field = e.loc?.join('.') || 'field';
-            return `${field}: ${e.msg}`;
-          });
-          errorMessage = errors.join('; ');
-        } 
-        // If detail is a string
-        else if (typeof errorData.detail === 'string') {
-          errorMessage = errorData.detail;
-        }
-        // If detail is an object, try to stringify it
-        else if (errorData.detail && typeof errorData.detail === 'object') {
-          errorMessage = JSON.stringify(errorData.detail);
-        }
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
+    } catch (error: unknown) {
+      console.error('Registration error:', error);
+      setError(getApiErrorMessage(error, 'Failed to register business'));
     } finally {
       setLoading(false);
     }

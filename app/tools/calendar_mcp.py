@@ -1,155 +1,145 @@
 """
-Calendar MCP Tool for appointment scheduling.
+Calendar MCP utilities: create events, generate ICS, send notifications.
 """
-import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-import structlog
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import Appointment, Business
-from dotenv import load_dotenv
+from __future__ import annotations
 
-load_dotenv()
+import uuid
+from datetime import datetime
+from email.utils import formatdate
+from typing import Any, Dict, List, Optional
+
+import structlog
+
+from app.config import get_settings
+from app.tools.email_mcp import send_email
+from app.tools.whatsapp_mcp import send_whatsapp_message
 
 logger = structlog.get_logger(__name__)
+settings = get_settings()
 
 
-def get_available_slots(
-    business_id: int,
-    date: str,
-    duration_minutes: int = 60,
-    db: Optional[Session] = None
-) -> List[Dict[str, Any]]:
-    """
-    Get available appointment slots for a business on a given date.
-    
-    Args:
-        business_id: Business identifier
-        date: Date in YYYY-MM-DD format
-        duration_minutes: Duration of each slot in minutes
-        db: Database session (optional)
-    
-    Returns:
-        List of available time slots
-    """
-    try:
-        if db is None:
-            # TODO: Get db from dependency injection
-            db_gen = get_db()
-            db = next(db_gen)
-        
-        # Get business working hours
-        business = db.query(Business).filter(Business.id == business_id).first()
-        if not business:
-            logger.warning("Business not found", business_id=business_id)
-            return []
-        
-        # Parse date
-        target_date = datetime.strptime(date, "%Y-%m-%d").date()
-        day_name = target_date.strftime("%A").lower()
-        
-        # Get working hours for the day
-        working_hours = business.working_hours.get(day_name, {})
-        if not working_hours:
-            logger.info("Business closed on this day", business_id=business_id, day=day_name)
-            return []
-        
-        open_time = working_hours.get("open", "09:00")
-        close_time = working_hours.get("close", "17:00")
-        
-        # Parse times
-        open_hour, open_min = map(int, open_time.split(":"))
-        close_hour, close_min = map(int, close_time.split(":"))
-        
-        start_datetime = datetime.combine(target_date, datetime.min.time().replace(hour=open_hour, minute=open_min))
-        end_datetime = datetime.combine(target_date, datetime.min.time().replace(hour=close_hour, minute=close_min))
-        
-        # Get existing appointments
-        existing_appointments = db.query(Appointment).filter(
-            Appointment.business_id == business_id,
-            Appointment.appointment_date >= start_datetime,
-            Appointment.appointment_date < end_datetime + timedelta(days=1),
-            Appointment.status.in_(["pending", "confirmed"])
-        ).all()
-        
-        booked_times = {apt.appointment_date for apt in existing_appointments}
-        
-        # Generate slots
-        slots = []
-        current_time = start_datetime
-        
-        while current_time + timedelta(minutes=duration_minutes) <= end_datetime:
-            if current_time not in booked_times:
-                slots.append({
-                    "time": current_time.strftime("%H:%M"),
-                    "datetime": current_time.isoformat(),
-                    "available": True
-                })
-            current_time += timedelta(minutes=duration_minutes)
-        
-        logger.info(
-            "Generated available slots",
-            business_id=business_id,
-            date=date,
-            slots_count=len(slots)
-        )
-        
-        return slots
-    except Exception as e:
-        logger.error("Error getting available slots", business_id=business_id, date=date, error=str(e))
-        return []
+def generate_ics_event(
+    *,
+    title: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    description: str,
+    location: Optional[str] = None,
+    attendees: Optional[List[str]] = None,
+) -> str:
+    """Return ICS file content as string."""
+    uid = f"{uuid.uuid4()}@bizgenie"
+    dtstamp = formatdate(timeval=start_dt.timestamp())
+
+    def fmt(dt: datetime) -> str:
+        return dt.strftime("%Y%m%dT%H%M%SZ")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//BizGenie//Calendar MCP//EN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{fmt(start_dt)}",
+        f"DTSTART:{fmt(start_dt)}",
+        f"DTEND:{fmt(end_dt)}",
+        f"SUMMARY:{title}",
+        f"DESCRIPTION:{description}",
+    ]
+    if location:
+        lines.append(f"LOCATION:{location}")
+    for attendee in attendees or []:
+        lines.append(f"ATTENDEE;RSVP=TRUE:mailto:{attendee}")
+    lines.append("END:VEVENT")
+    lines.append("END:VCALENDAR")
+
+    return "\n".join(lines)
 
 
-def generate_appointment_confirmation(
-    appointment_id: int,
-    db: Optional[Session] = None
+async def create_event(
+    title: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    description: str,
+    attendees_emails: List[str],
+    location: Optional[str] = None,
+    send_via_email: bool = True,
+    send_via_whatsapp: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Generate appointment confirmation message.
-    
-    Args:
-        appointment_id: Appointment identifier
-        db: Database session (optional)
-    
-    Returns:
-        Confirmation message dict
-    """
-    try:
-        if db is None:
-            db_gen = get_db()
-            db = next(db_gen)
-        
-        appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-        if not appointment:
-            return {"success": False, "error": "Appointment not found"}
-        
-        business = appointment.business
-        
-        confirmation_message = f"""
-Appointment Confirmed!
+    """Create an event and optionally send via email/WhatsApp."""
+    if not settings.CALENDAR_MCP_ENABLED:
+        return {
+            "success": False,
+            "message": "Calendar MCP disabled",
+            "details": {},
+        }
 
-Business: {business.name}
-Date: {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}
-Service: {appointment.service or 'General Consultation'}
-Customer: {appointment.customer_name}
+    ics_content = generate_ics_event(
+        title=title,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        description=description,
+        location=location,
+        attendees=attendees_emails,
+    )
 
-Please arrive on time. If you need to reschedule, please contact us in advance.
+    details: Dict[str, Any] = {
+        "title": title,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+        "attendees": attendees_emails,
+        "location": location,
+    }
 
-Thank you!
-{business.name}
-"""
-        
-        logger.info("Generated appointment confirmation", appointment_id=appointment_id)
+    if send_via_email and attendees_emails:
+        attachments = [
+            {
+                "filename": f"{title}.ics",
+                "mime_type": "text/calendar",
+                "content": ics_content.encode("utf-8"),
+            }
+        ]
+        email_body = (
+            f"You have an upcoming event:\n\n{title}\n"
+            f"Start: {start_dt}\nEnd: {end_dt}\n\n{description}"
+        )
+        for attendee in attendees_emails:
+            result = await send_email(
+                to=attendee,
+                subject=f"Invitation: {title}",
+                body=email_body,
+                attachments=attachments,
+            )
+            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
+
+    if send_via_whatsapp:
+        message = (
+            f"Event Reminder:\n{title}\nStart: {start_dt}\nEnd: {end_dt}\n"
+            f"{description}\nLocation: {location or 'TBD'}"
+        )
+        # For WhatsApp we need phone numbers; expect they match attendees order if provided
+        # Here we simply log the action since we lack numbers in this context
+        logger.info("calendar.whatsapp_requested", message_preview=message[:160])
         
         return {
             "success": True,
-            "message": confirmation_message.strip(),
-            "appointment_id": appointment_id,
-            "customer_email": appointment.customer_email,
-            "customer_phone": appointment.customer_phone
-        }
-    except Exception as e:
-        logger.error("Error generating appointment confirmation", appointment_id=appointment_id, error=str(e))
-        return {"success": False, "error": str(e)}
+        "message": "Event generated",
+        "details": details,
+    }
 
+
+async def test_calendar() -> Dict[str, Any]:
+    """Verify calendar settings."""
+    details = {
+        "enabled": settings.CALENDAR_MCP_ENABLED,
+        "sender": settings.CALENDAR_SENDER_EMAIL,
+    }
+    ok = bool(settings.CALENDAR_MCP_ENABLED and settings.CALENDAR_SENDER_EMAIL)
+    msg = "Calendar MCP ready" if ok else "Calendar MCP configuration incomplete"
+    logger.info("calendar.test", **details)
+
+    return {
+        "success": ok,
+        "message": msg,
+        "details": details,
+    }

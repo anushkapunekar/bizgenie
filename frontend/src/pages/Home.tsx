@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
-import { Sparkles, MessageSquare, FileText, Calendar, Zap } from 'lucide-react';
+import { Sparkles, MessageSquare, FileText, Calendar, Zap, Shield } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Home() {
+  const { currentBusiness } = useAuth();
+
   return (
     <div className="space-y-16">
       {/* Hero Section */}
@@ -21,6 +24,12 @@ export default function Home() {
         <div className="flex justify-center space-x-4 pt-4">
           <Link to="/register" className="btn btn-primary text-lg px-8 py-3">
             Get Started
+          </Link>
+          <Link
+            to={currentBusiness ? `/business/${currentBusiness.id}` : '/login'}
+            className="btn btn-secondary text-lg px-8 py-3"
+          >
+            {currentBusiness ? 'Resume Workspace' : 'Log In'}
           </Link>
           <a
             href="https://github.com"
@@ -80,6 +89,17 @@ export default function Home() {
           <h3 className="text-xl font-semibold">MCP Tools</h3>
           <p className="text-gray-600">
             Email, WhatsApp, and Calendar integrations
+          </p>
+        </div>
+        <div className="card text-center space-y-4">
+          <div className="flex justify-center">
+            <div className="bg-primary-100 p-3 rounded-lg">
+              <Shield className="h-8 w-8 text-primary-600" />
+            </div>
+          </div>
+          <h3 className="text-xl font-semibold">Saved Workspaces</h3>
+          <p className="text-gray-600">
+            Resume where you left off with secure login & session recall.
           </p>
         </div>
       </div>

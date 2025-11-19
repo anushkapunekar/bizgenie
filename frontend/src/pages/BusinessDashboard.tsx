@@ -1,57 +1,83 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { MessageSquare, Upload, FileText, Building2, Mail, Phone, Clock } from 'lucide-react';
+import { MessageSquare, Upload, FileText, Building2, Mail, Phone, Clock, Link2, Copy, CheckCircle } from 'lucide-react';
 import { businessApi } from '../services/api';
 import type { Business, Document } from '../types';
 import DocumentUpload from '../components/DocumentUpload';
+import { useAuth } from '../context/AuthContext';
+import { getApiErrorMessage } from '../utils/errors';
 
 export default function BusinessDashboard() {
   const { id } = useParams<{ id: string }>();
+  const { setActiveBusiness } = useAuth();
   const [business, setBusiness] = useState<Business | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
-  useEffect(() => {
-    if (id) {
-      loadBusiness();
-      loadDocuments();
-    }
-  }, [id]);
+  const businessId = id ? Number(id) : null;
 
-  const loadBusiness = async () => {
+  const loadBusiness = useCallback(async () => {
+    if (!businessId) return;
     try {
-      const data = await businessApi.get(Number(id));
+      const data = await businessApi.get(businessId);
       setBusiness(data);
-    } catch (err: any) {
-      console.error('Load business error:', err);
-      
-      // Handle Pydantic validation errors
-      let errorMsg = 'Failed to load business';
-      if (err.response?.data) {
-        const errorData = err.response.data;
-        if (Array.isArray(errorData.detail)) {
-          errorMsg = errorData.detail.map((e: any) => e.msg).join('; ');
-        } else if (typeof errorData.detail === 'string') {
-          errorMsg = errorData.detail;
-        }
-      }
-      setError(errorMsg);
+      setActiveBusiness(data);
+      setError(null);
+    } catch (error: unknown) {
+      console.error('Load business error:', error);
+      setError(getApiErrorMessage(error, 'Failed to load business'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [businessId, setActiveBusiness]);
 
-  const loadDocuments = async () => {
-    if (!id) return;
+  const loadDocuments = useCallback(async () => {
+    if (!businessId) return;
     try {
-      const data = await businessApi.getDocuments(Number(id));
+      const data = await businessApi.getDocuments(businessId);
       console.log('Documents loaded:', data);
       setDocuments(data);
-    } catch (err: any) {
-      console.error('Failed to load documents:', err);
-      console.error('Error details:', err.response?.data);
+    } catch (error: unknown) {
+      console.error('Failed to load documents:', error);
+    }
+  }, [businessId]);
+
+  useEffect(() => {
+    loadBusiness();
+    loadDocuments();
+  }, [loadBusiness, loadDocuments]);
+
+  const chatUrl = useMemo(() => {
+    if (!business) return '';
+    return `${window.location.origin}/business/${business.id}/chat`;
+  }, [business]);
+
+  const knowledgeStatus = useMemo(() => {
+    if (!documents.length) {
+      return {
+        status: 'Needs content',
+        tone: 'text-red-600',
+        description: 'Upload at least one PDF so the AI can answer company-specific questions.',
+      };
+    }
+    return {
+      status: 'Ready for Q&A',
+      tone: 'text-green-600',
+      description: `Loaded ${documents.length} document${documents.length > 1 ? 's' : ''} into the knowledge base.`,
+    };
+  }, [documents.length]);
+
+  const handleCopyLink = async () => {
+    if (!chatUrl) return;
+    try {
+      await navigator.clipboard.writeText(chatUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch (error) {
+      console.error('Copy failed', error);
     }
   };
 
@@ -134,6 +160,35 @@ export default function BusinessDashboard() {
             </div>
           </div>
         </Link>
+      </div>
+
+      {/* Workspace Health */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="card space-y-3">
+          <div className="flex items-center space-x-2">
+            <CheckCircle className="h-5 w-5 text-primary-600" />
+            <h2 className="text-xl font-semibold">AI Knowledge Base</h2>
+          </div>
+          <div className={`text-lg font-semibold ${knowledgeStatus.tone}`}>{knowledgeStatus.status}</div>
+          <p className="text-gray-600">{knowledgeStatus.description}</p>
+          <div className="text-sm text-gray-500">Last sync: {new Date().toLocaleString()}</div>
+        </div>
+        <div className="card space-y-3">
+          <div className="flex items-center space-x-2">
+            <Link2 className="h-5 w-5 text-primary-600" />
+            <h2 className="text-xl font-semibold">Share chat link</h2>
+          </div>
+          <p className="text-gray-600">
+            Share this link with staff to test the assistant using current data and documents.
+          </p>
+          <div className="flex items-center space-x-2">
+            <input type="text" readOnly className="input flex-1 text-sm" value={chatUrl} />
+            <button onClick={handleCopyLink} className="btn btn-secondary flex items-center space-x-1">
+              <Copy className="h-4 w-4" />
+              <span>{copiedLink ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Document Upload Form */}

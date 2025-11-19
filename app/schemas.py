@@ -1,7 +1,7 @@
 """
 Pydantic schemas for request/response validation.
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, time
 from enum import Enum
@@ -28,6 +28,24 @@ class BusinessUpdate(BaseModel):
     working_hours: Optional[Dict[str, Dict[str, str]]] = None
     contact_email: Optional[EmailStr] = None
     contact_phone: Optional[str] = None
+
+
+class BusinessLoginRequest(BaseModel):
+    """Schema for logging into an existing business profile."""
+    business_id: Optional[int] = None
+    contact_email: Optional[EmailStr] = None
+    contact_phone: Optional[str] = None
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "BusinessLoginRequest":
+        if not any(
+            getattr(self, field) for field in ("business_id", "contact_email", "contact_phone", "name")
+        ):
+            raise ValueError(
+                "At least one identifier (business_id, contact_email, contact_phone, or name) is required."
+            )
+        return self
 
 
 class BusinessResponse(BaseModel):

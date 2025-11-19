@@ -139,6 +139,35 @@ async def send_whatsapp_blast(numbers: List[str], message: str) -> Dict[str, Any
         "details": results,
     }
 
+# ---------------------------------------------------------
+# ADVANCED WHATSAPP ACTIONS FOR TOOL ROUTER
+# These wrap send_whatsapp_message() but provide clearer
+# names for confirmation/update/cancellation/followup.
+# ---------------------------------------------------------
+
+async def send_whatsapp_confirmation(to: str, message: str = None) -> Dict[str, Any]:
+    """Send a WhatsApp confirmation message."""
+    final_msg = message or "Your appointment is confirmed! ✔️"
+    return await send_whatsapp_message(to=to, message=final_msg)
+
+
+async def send_whatsapp_update(to: str, message: str = None) -> Dict[str, Any]:
+    """Send a WhatsApp update message."""
+    final_msg = message or "Your appointment has been updated. 🔄"
+    return await send_whatsapp_message(to=to, message=final_msg)
+
+
+async def send_whatsapp_cancellation(to: str, message: str = None) -> Dict[str, Any]:
+    """Send a WhatsApp cancellation message."""
+    final_msg = message or "Your appointment has been cancelled. ❌"
+    return await send_whatsapp_message(to=to, message=final_msg)
+
+
+async def send_whatsapp_followup(to: str, message: str = None) -> Dict[str, Any]:
+    """Send a follow-up WhatsApp message."""
+    final_msg = message or "Just checking in! Let me know if you need anything. 😊"
+    return await send_whatsapp_message(to=to, message=final_msg)
+
 
 async def test_whatsapp() -> Dict[str, Any]:
     """Validate UltraMsg configuration without sending a message."""

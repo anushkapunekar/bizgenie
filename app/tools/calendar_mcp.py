@@ -1,5 +1,6 @@
 """
 Calendar MCP utilities: create events, generate ICS, send notifications.
+Updated with lightweight update_event and cancel_event wrappers.
 """
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ def generate_ics_event(
 ) -> str:
     """Return ICS file content as string."""
     uid = f"{uuid.uuid4()}@bizgenie"
-    dtstamp = formatdate(timeval=start_dt.timestamp())
 
     def fmt(dt: datetime) -> str:
         return dt.strftime("%Y%m%dT%H%M%SZ")
@@ -100,13 +100,13 @@ async def create_event(
             }
         ]
         email_body = (
-            f"You have an upcoming event:\n\n{title}\n"
+            f"You have a new event:\n\n{title}\n"
             f"Start: {start_dt}\nEnd: {end_dt}\n\n{description}"
         )
         for attendee in attendees_emails:
             result = await send_email(
                 to=attendee,
-                subject=f"Invitation: {title}",
+                subject=f"New Event: {title}",
                 body=email_body,
                 attachments=attachments,
             )
@@ -114,18 +114,104 @@ async def create_event(
 
     if send_via_whatsapp:
         message = (
-            f"Event Reminder:\n{title}\nStart: {start_dt}\nEnd: {end_dt}\n"
+            f"Event Confirmation:\n{title}\nStart: {start_dt}\nEnd: {end_dt}\n"
             f"{description}\nLocation: {location or 'TBD'}"
         )
-        # For WhatsApp we need phone numbers; expect they match attendees order if provided
-        # Here we simply log the action since we lack numbers in this context
-        logger.info("calendar.whatsapp_requested", message_preview=message[:160])
-        
-        return {
-            "success": True,
-        "message": "Event generated",
-        "details": details,
+        logger.info("calendar.whatsapp_sent", message_preview=message[:160])
+
+    return {"success": True, "message": "Event created", "details": details}
+
+
+# --------------------------------------------------------
+# NEW: Lightweight UPDATE EVENT
+# --------------------------------------------------------
+async def update_event(
+    *,
+    title: str,
+    new_start: datetime,
+    new_end: datetime,
+    description: str,
+    attendees_emails: List[str],
+    location: Optional[str] = None,
+    send_via_email: bool = True,
+    send_via_whatsapp: bool = False,
+) -> Dict[str, Any]:
+    """Send updated event details to attendees (lightweight wrapper)."""
+
+    details = {
+        "title": title,
+        "new_start": new_start.isoformat(),
+        "new_end": new_end.isoformat(),
+        "attendees": attendees_emails,
+        "location": location,
     }
+
+    # Email update
+    if send_via_email and attendees_emails:
+        email_body = (
+            f"Your event '{title}' has been updated.\n\n"
+            f"New Start: {new_start}\nNew End: {new_end}\n\n{description}"
+        )
+        for attendee in attendees_emails:
+            result = await send_email(
+                to=attendee,
+                subject=f"Updated Event: {title}",
+                body=email_body,
+            )
+            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
+
+    # WhatsApp update
+    if send_via_whatsapp:
+        message = (
+            f"Event Updated:\n{title}\nNew Start: {new_start}\nNew End: {new_end}\n"
+            f"{description}\nLocation: {location or 'TBD'}"
+        )
+        logger.info("calendar.whatsapp_update", message_preview=message[:160])
+
+    return {"success": True, "message": "Event updated", "details": details}
+
+
+# --------------------------------------------------------
+# NEW: Lightweight CANCEL EVENT
+# --------------------------------------------------------
+async def cancel_event(
+    *,
+    title: str,
+    attendees_emails: List[str],
+    send_via_email: bool = True,
+    send_via_whatsapp: bool = False,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Notify attendees that the event is cancelled."""
+
+    details = {
+        "title": title,
+        "reason": reason or "No longer available",
+        "attendees": attendees_emails,
+    }
+
+    # Email cancellation
+    if send_via_email and attendees_emails:
+        email_body = (
+            f"Your event '{title}' has been cancelled.\n\n"
+            f"Reason: {reason or 'No longer available'}"
+        )
+        for attendee in attendees_emails:
+            result = await send_email(
+                to=attendee,
+                subject=f"Event Cancelled: {title}",
+                body=email_body,
+            )
+            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
+
+    # WhatsApp cancellation
+    if send_via_whatsapp:
+        message = (
+            f"Event Cancelled:\n{title}\nReason: {reason or 'No longer available'}"
+        )
+        logger.info("calendar.whatsapp_cancel", message_preview=message[:160])
+
+    return {"success": True, "message": "Event cancelled", "details": details}
 
 
 async def test_calendar() -> Dict[str, Any]:

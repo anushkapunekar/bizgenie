@@ -1,5 +1,11 @@
 """
 Email MCP tools using async SMTP (aiosmtplib).
+Updated with wrapper tools:
+- send_email_confirmation
+- send_email_update
+- send_email_cancellation
+- send_email_reminder
+- send_email_followup
 """
 from __future__ import annotations
 
@@ -137,6 +143,92 @@ async def send_daily_summary(to: str, summary_text: str) -> Dict[str, Any]:
     return await send_email(to, subject, body)
 
 
+# -----------------------------------------------------------------
+# NEW EMAIL WRAPPER FUNCTIONS
+# -----------------------------------------------------------------
+
+async def send_email_confirmation(
+    to: str,
+    title: str,
+    start: str,
+    end: str,
+    location: Optional[str] = None,
+) -> Dict[str, Any]:
+    subject = f"Appointment Confirmation: {title}"
+    body = (
+        f"Your appointment is confirmed.\n\n"
+        f"Title: {title}\n"
+        f"Start: {start}\nEnd: {end}\n"
+        f"Location: {location or 'TBD'}\n\n"
+        f"Thank you for choosing us!"
+    )
+    return await send_email(to, subject, body)
+
+
+async def send_email_update(
+    to: str,
+    title: str,
+    new_start: str,
+    new_end: str,
+    location: Optional[str] = None,
+) -> Dict[str, Any]:
+    subject = f"Updated Appointment: {title}"
+    body = (
+        f"Your appointment has been updated.\n\n"
+        f"New Start: {new_start}\n"
+        f"New End: {new_end}\n"
+        f"Location: {location or 'TBD'}\n\n"
+        f"Please review the new time."
+    )
+    return await send_email(to, subject, body)
+
+
+async def send_email_cancellation(
+    to: str,
+    title: str,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    subject = f"Appointment Cancelled: {title}"
+    body = (
+        f"Your appointment '{title}' has been cancelled.\n\n"
+        f"Reason: {reason or 'No longer available'}.\n\n"
+        f"Sorry for the inconvenience."
+    )
+    return await send_email(to, subject, body)
+
+
+async def send_email_reminder(
+    to: str,
+    title: str,
+    start: str,
+) -> Dict[str, Any]:
+    subject = f"Appointment Reminder: {title}"
+    body = (
+        f"This is a reminder for your upcoming appointment.\n\n"
+        f"Title: {title}\n"
+        f"Start Time: {start}\n\n"
+        f"We look forward to seeing you."
+    )
+    return await send_email(to, subject, body)
+
+
+async def send_email_followup(
+    to: str,
+    title: str,
+    last_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    subject = f"Follow-Up: {title}"
+    body = (
+        f"Following up regarding your appointment inquiry:\n\n"
+        f"{last_message or ''}\n\n"
+        f"Let us know how we can help."
+    )
+    return await send_email(to, subject, body)
+
+
+# -----------------------------------------------------------------
+# TEST EMAIL (unchanged)
+# -----------------------------------------------------------------
 async def test_email() -> Dict[str, Any]:
     details = {
         "enabled": settings.EMAIL_MCP_ENABLED,

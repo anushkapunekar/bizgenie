@@ -1,5 +1,6 @@
 """
 LangGraph wrapper with a single answer node.
+Now supports expanded MCP tool routing for calendar, email, and WhatsApp.
 """
 from __future__ import annotations
 
@@ -11,9 +12,24 @@ import structlog
 from langgraph.graph import END, StateGraph
 
 from app.agents.nodes.rag import generate_answer
-from app.tools.calendar_mcp import create_event
-from app.tools.email_mcp import send_email
-from app.tools.whatsapp_mcp import send_whatsapp_message
+
+# Import ALL new tool functions
+from app.tools.calendar_mcp import create_event, update_event, cancel_event
+from app.tools.email_mcp import (
+    send_email,
+    send_email_confirmation,
+    send_email_update,
+    send_email_cancellation,
+    send_email_reminder,
+    send_email_followup,
+)
+from app.tools.whatsapp_mcp import (
+    send_whatsapp_message,
+    send_whatsapp_confirmation,
+    send_whatsapp_update,
+    send_whatsapp_cancellation,
+    send_whatsapp_followup,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -39,11 +55,11 @@ def _schedule_tool(coro):
         asyncio.run(coro)
         return
 
-    def _on_done(fut: asyncio.Future):
+    def _on_done(fut):
         try:
             result = fut.result()
             logger.info("agent.tool_completed", result=result)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.error("agent.tool_failed", error=str(exc))
 
     task.add_done_callback(_on_done)
@@ -52,17 +68,11 @@ def _schedule_tool(coro):
 def tool_router(reply: str, business_context: Dict[str, Any]) -> Dict[str, Any]:
     """
     Inspect LLM output; if it contains call_tool instructions, execute tool.
-    Expected JSON format:
-    {
-        "answer": "...",
-        "call_tool": {
-            "name": "send_whatsapp",
-            "params": {...}
-        }
-    }
+    Supports extended intelligent tool names.
     """
     data: Optional[Dict[str, Any]] = None
     trimmed = reply.strip()
+
     if trimmed.startswith("{") and trimmed.endswith("}"):
         try:
             data = json.loads(trimmed)
@@ -77,37 +87,95 @@ def tool_router(reply: str, business_context: Dict[str, Any]) -> Dict[str, Any]:
     params = call.get("params", {})
     tool_actions = []
 
+    # ---------------------------------------------------------
+    # WHATSAPP ACTIONS
+    # ---------------------------------------------------------
     if tool_name == "send_whatsapp":
         to = params.get("to") or business_context.get("contact_phone")
         message = params.get("message") or data.get("answer", reply)
         if to and message:
-            logger.info("agent.tool_trigger", tool=tool_name, to=to)
+            logger.info("agent.tool_trigger", tool=tool_name)
             _schedule_tool(send_whatsapp_message(to=to, message=message))
-            tool_actions.append({"tool": "whatsapp", "to": to})
+            tool_actions.append({"tool": "whatsapp", "action": "send_whatsapp"})
+
+    elif tool_name == "send_whatsapp_confirmation":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_whatsapp_confirmation(**params))
+        tool_actions.append({"tool": "whatsapp", "action": "confirmation"})
+
+    elif tool_name == "send_whatsapp_update":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_whatsapp_update(**params))
+        tool_actions.append({"tool": "whatsapp", "action": "update"})
+
+    elif tool_name == "send_whatsapp_cancellation":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_whatsapp_cancellation(**params))
+        tool_actions.append({"tool": "whatsapp", "action": "cancellation"})
+
+    elif tool_name == "send_whatsapp_followup":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_whatsapp_followup(**params))
+        tool_actions.append({"tool": "whatsapp", "action": "followup"})
+
+    # ---------------------------------------------------------
+    # EMAIL ACTIONS
+    # ---------------------------------------------------------
     elif tool_name == "send_email":
         to = params.get("to") or business_context.get("contact_email")
         subject = params.get("subject") or "Notification from BizGenie"
         body = params.get("body") or data.get("answer", reply)
         if to and body:
-            logger.info("agent.tool_trigger", tool=tool_name, to=to)
+            logger.info("agent.tool_trigger", tool=tool_name)
             _schedule_tool(send_email(to=to, subject=subject, body=body))
-            tool_actions.append({"tool": "email", "to": to})
+            tool_actions.append({"tool": "email", "action": "send_email"})
+
+    elif tool_name == "send_email_confirmation":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_email_confirmation(**params))
+        tool_actions.append({"tool": "email", "action": "confirmation"})
+
+    elif tool_name == "send_email_update":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_email_update(**params))
+        tool_actions.append({"tool": "email", "action": "update"})
+
+    elif tool_name == "send_email_cancellation":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_email_cancellation(**params))
+        tool_actions.append({"tool": "email", "action": "cancellation"})
+
+    elif tool_name == "send_email_reminder":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_email_reminder(**params))
+        tool_actions.append({"tool": "email", "action": "reminder"})
+
+    elif tool_name == "send_email_followup":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(send_email_followup(**params))
+        tool_actions.append({"tool": "email", "action": "followup"})
+
+    # ---------------------------------------------------------
+    # CALENDAR ACTIONS
+    # ---------------------------------------------------------
     elif tool_name == "create_event":
         logger.info("agent.tool_trigger", tool=tool_name)
-        _schedule_tool(
-            create_event(
-                title=params.get("title", "BizGenie Event"),
-                start_dt=params.get("start_dt"),
-                end_dt=params.get("end_dt"),
-                description=params.get("description", ""),
-                attendees_emails=params.get("attendees_emails", []),
-                location=params.get("location"),
-                send_via_email=params.get("send_via_email", True),
-                send_via_whatsapp=params.get("send_via_whatsapp", False),
-            )
-        )
-        tool_actions.append({"tool": "calendar"})
+        _schedule_tool(create_event(**params))
+        tool_actions.append({"tool": "calendar", "action": "create"})
 
+    elif tool_name == "update_event":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(update_event(**params))
+        tool_actions.append({"tool": "calendar", "action": "update"})
+
+    elif tool_name == "cancel_event":
+        logger.info("agent.tool_trigger", tool=tool_name)
+        _schedule_tool(cancel_event(**params))
+        tool_actions.append({"tool": "calendar", "action": "cancel"})
+
+    # ---------------------------------------------------------
+    # FINAL REPLY BACK TO USER
+    # ---------------------------------------------------------
     final_reply = data.get("answer", reply)
     return {"reply": final_reply, "tool_actions": tool_actions}
 
@@ -127,6 +195,7 @@ def answer_node(state: AgentState) -> AgentState:
     state["response"] = routed["reply"]
     state["documents_used"] = result["documents_used"]
     state["tool_actions"] = routed.get("tool_actions", [])
+
     logger.info(
         "agent.response_ready",
         business_id=business_id,

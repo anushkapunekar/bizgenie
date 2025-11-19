@@ -35,6 +35,7 @@ interface StoredMessage {
   sender: 'user' | 'assistant';
   timestamp: string;
   intent?: string;
+  tool_actions?: any[];
 }
 
 interface StoredChatSession {
@@ -43,6 +44,10 @@ interface StoredChatSession {
   profile?: ChatProfile;
 }
 
+/**
+ * NOTE: Message type in your project might not include `tool_actions`.
+ * We extend local usage to allow `tool_actions?: any[]` on assistant messages.
+ */
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const [business, setBusiness] = useState<Business | null>(null);
@@ -128,6 +133,8 @@ export default function Chat() {
       messages: messages.map((msg) => ({
         ...msg,
         timestamp: msg.timestamp.toISOString(),
+        intent: (msg as any).intent,
+        tool_actions: (msg as any).tool_actions,
       })),
     };
     sessionStorage.setItem(chatSessionKey, JSON.stringify(payload));
@@ -202,9 +209,75 @@ export default function Chat() {
     setProfileEditorOpen(false);
   };
 
+  /**
+   * Helper to convert tool call into a human readable status message.
+   * We only use it for UI display — backend still executes tools asynchronously.
+   */
+  const renderToolActionSummary = (callTool: any) => {
+    if (!callTool || !callTool.name) return null;
+    const name: string = callTool.name;
+    const params = callTool.params || {};
+    switch (name) {
+      case 'create_event':
+        return `Scheduled calendar event: ${params.title ?? 'Event'}`;
+      case 'update_event':
+        return `Updated event: ${params.title ?? 'Event'}`;
+      case 'cancel_event':
+        return `Cancelled event: ${params.title ?? 'Event'}`;
+      case 'send_whatsapp_confirmation':
+        return `WhatsApp confirmation sent to ${params.to ?? 'recipient'}`;
+      case 'send_whatsapp_update':
+        return `WhatsApp update sent to ${params.to ?? 'recipient'}`;
+      case 'send_whatsapp_cancellation':
+        return `WhatsApp cancellation sent to ${params.to ?? 'recipient'}`;
+      case 'send_whatsapp_followup':
+        return `WhatsApp follow-up sent to ${params.to ?? 'recipient'}`;
+      case 'send_email_confirmation':
+        return `Confirmation email sent to ${params.to ?? 'recipient'}`;
+      case 'send_email_update':
+        return `Update email sent to ${params.to ?? 'recipient'}`;
+      case 'send_email_cancellation':
+        return `Cancellation email sent to ${params.to ?? 'recipient'}`;
+      case 'send_email_reminder':
+        return `Reminder email sent to ${params.to ?? 'recipient'}`;
+      case 'send_email_followup':
+        return `Follow-up email sent to ${params.to ?? 'recipient'}`;
+      case 'send_email':
+        return `Email sent to ${params.to ?? 'recipient'}`;
+      case 'send_whatsapp':
+        return `WhatsApp message sent to ${params.to ?? 'recipient'}`;
+      default:
+        return `${name} executed`;
+    }
+  };
+
+  /**
+   * Parse the bot reply:
+   * - If it is JSON with call_tool, extract the "answer" and the call_tool payload.
+   * - Return { answerText, call_tool } where call_tool may be null.
+   */
+  const parseAgentReply = (rawReply: string) => {
+    if (!rawReply) return { answer: '', call_tool: null };
+    const trimmed = rawReply.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+      // plain text
+      return { answer: rawReply, call_tool: null };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      // expected { answer: "...", call_tool: { name: "...", params: {...} } }
+      const answer = parsed.answer ?? rawReply;
+      const call_tool = parsed.call_tool ?? null;
+      return { answer, call_tool };
+    } catch (err) {
+      // not valid JSON fallback
+      return { answer: rawReply, call_tool: null };
+    }
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!input.trim() || loading || !id) return;
 
     if (!readyToChat) {
@@ -215,7 +288,7 @@ export default function Chat() {
 
     // Save the message text before clearing input
     const messageText = input.trim();
-    
+
     const userMessage: Message = {
       id: Date.now().toString(),
       text: messageText,
@@ -240,23 +313,41 @@ export default function Chat() {
         setConversationId(response.conversation_id);
       }
 
-      const replyText = response.reply || 'I apologize, but I could not generate a response. Please try again.';
+      const rawReply: string = response.reply || 'I apologize, but I could not generate a response. Please try again.';
 
+      // Parse for JSON tool calls
+      const { answer, call_tool } = parseAgentReply(rawReply);
+
+      // Assistant main message
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: replyText,
+        text: answer,
         sender: 'assistant',
         timestamp: new Date(),
         intent: response.intent,
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      // If a tool call exists, create an extra assistant message that displays the triggered tool
+      if (call_tool) {
+        // human-readable summary
+        const summary = renderToolActionSummary(call_tool);
+        const toolMsg: Message = {
+          id: (Date.now() + 2).toString(),
+          text: summary ?? `Triggered tool: ${call_tool.name}`,
+          sender: 'assistant',
+          timestamp: new Date(),
+          // we add the raw tool payload so you can show details or debug later
+          // @ts-ignore
+          tool_actions: [call_tool],
+        };
+
+        setMessages((prev) => [...prev, assistantMessage, toolMsg]);
+      } else {
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
     } catch (error: unknown) {
       console.error('Chat error:', error);
-      const errorDetail = getApiErrorMessage(
-        error,
-        'Failed to send message. Please check your connection and try again.'
-      );
+      const errorDetail = getApiErrorMessage(error, 'Failed to send message. Please check your connection and try again.');
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: `Error: ${errorDetail}`,
@@ -370,8 +461,8 @@ export default function Chat() {
         )}
 
         {/* Messages */}
-        <div 
-          className="flex-1 overflow-y-auto p-4" 
+        <div
+          className="flex-1 overflow-y-auto p-4"
           style={{ minHeight: '400px', maxHeight: 'calc(100vh - 300px)' }}
         >
           {messages.length === 0 && (
@@ -391,17 +482,11 @@ export default function Chat() {
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex items-start space-x-3 mb-4 ${
-                message.sender === 'user' ? 'flex-row-reverse space-x-reverse' : ''
-              }`}
+              className={`flex items-start space-x-3 mb-4 ${message.sender === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}
               style={{ minHeight: '40px' }}
             >
               <div
-                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  message.sender === 'user'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-200 text-gray-700'
-                }`}
+                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${message.sender === 'user' ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-700'}`}
               >
                 {message.sender === 'user' ? (
                   <User className="h-5 w-5" />
@@ -410,25 +495,34 @@ export default function Chat() {
                 )}
               </div>
               <div
-                className={`flex-1 rounded-lg p-3 max-w-[80%] ${
-                  message.sender === 'user'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-900 border border-gray-200'
-                }`}
+                className={`flex-1 rounded-lg p-3 max-w-[80%] ${message.sender === 'user' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-900 border border-gray-200'}`}
                 style={{
                   wordWrap: 'break-word',
                   overflowWrap: 'break-word',
                 }}
               >
                 <p className="whitespace-pre-wrap break-words">{message.text || '(Empty message)'}</p>
+
+                {/* Show intent if present */}
                 {message.intent && message.sender === 'assistant' && (
-                  <span
-                    className={`text-xs mt-2 block ${
-                      message.sender === 'user' ? 'text-primary-100' : 'text-gray-500'
-                    }`}
-                  >
+                  <span className={`text-xs mt-2 block ${message.sender === 'user' ? 'text-primary-100' : 'text-gray-500'}`}>
                     Intent: {message.intent}
                   </span>
+                )}
+
+                {/* If message contains tool_actions, render readable badges/list */}
+                {/* @ts-ignore */}
+                {(message as any).tool_actions && (message as any).tool_actions.length > 0 && (
+                  <div className="mt-3 flex flex-col space-y-2">
+                    {/* @ts-ignore */}
+                    {(message as any).tool_actions.map((t: any, i: number) => (
+                      <div key={i} className="inline-flex items-center space-x-2 text-sm text-gray-700 bg-white border border-gray-200 rounded px-3 py-1">
+                        <span className="font-medium text-gray-800">{renderToolActionSummary(t)}</span>
+                        {/* show a small success dot for UX */}
+                        <span className="ml-2 inline-block w-2 h-2 rounded-full bg-green-400" />
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
@@ -477,4 +571,3 @@ export default function Chat() {
     </div>
   );
 }
-

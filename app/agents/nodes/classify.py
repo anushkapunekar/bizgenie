@@ -140,7 +140,7 @@ def classify_node(state: Dict[str, Any]) -> Dict[str, Any]:
     intent = classify_intent(user_message, business_context)
 
     state["intent"] = intent
-    state["next_node"] = intent  # for future multi-node workflows
+    # state["next_node"] = intent  # for future multi-node workflows
 
     logger.info("Intent classification completed", intent=intent)
 

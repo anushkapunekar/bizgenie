@@ -1,5 +1,9 @@
 """
-Minimal RAG node: always query vector store, always answer with docs if present.
+Resilient RAG node for BizGenie.
+
+- Uses vector store + LLM when available
+- Falls back to business metadata if LLM/vector store fail
+- Returns plain text by default (tool JSON optional)
 """
 from __future__ import annotations
 
@@ -14,82 +18,62 @@ logger = structlog.get_logger(__name__)
 
 
 def _format_documents(documents: List[Dict[str, Any]]) -> str:
-    """Turn retrieved chunks into a readable block for the prompt."""
     formatted = []
     for idx, doc in enumerate(documents, start=1):
-        metadata = doc.get("metadata") or {}
-        source = metadata.get("filename") or metadata.get("source") or "Document"
-        chunk_text = doc.get("text", "").strip()
-        formatted.append(f"[{idx}] Source: {source}\n{chunk_text}")
+        text = (doc.get("text") or "").strip()
+        if not text:
+            continue
+        meta = doc.get("metadata") or {}
+        src = meta.get("filename") or meta.get("source") or "Document"
+        formatted.append(f"[{idx}] Source: {src}\n{text}")
     return "\n\n".join(formatted)
 
 
-def _build_prompt(user_message: str, documents: List[Dict[str, Any]]) -> str:
-    """
-    Tool-aware BizGenie prompt.
-    Ensures model outputs either:
-    - Natural language answer, OR
-    - JSON with call_tool instructions.
-    """
+def _fallback_from_metadata(user_message: str, meta: Dict[str, Any]) -> str:
+    """Used when vectorstore or LLM fail."""
+    name = meta.get("name") or "this business"
+    services = meta.get("services") or []
+    hours = meta.get("working_hours") or {}
 
-    docs_block = _format_documents(documents) if documents else "No matching documents."
+    parts = [f"I'm having a bit of trouble generating a full answer right now, but here’s what I can share about {name}:"]
+
+    if services:
+        s = ", ".join(services) if isinstance(services, list) else str(services)
+        parts.append(f"\n• Services offered: {s}")
+
+    if hours:
+        parts.append("\n• Working hours:")
+        for d, info in hours.items():
+            if info and info.get("open") and info.get("close"):
+                parts.append(f"  - {d.capitalize()}: {info['open']}–{info['close']}")
+
+    parts.append("\nYou can rephrase your question and I will try again.")
+    return "\n".join(parts)
+
+
+def _build_prompt(user_message: str, documents: List[Dict[str, Any]], meta: Dict[str, Any]) -> str:
+    docs_text = _format_documents(documents) if documents else "No matching documents."
 
     return f"""
-You are BizGenie, an AI assistant for small businesses.
-You can answer questions OR call tools to perform actions.
+You are BizGenie, an assistant for small businesses.
 
-TOOLS YOU CAN CALL:
-1. WhatsApp Tools:
-   - send_whatsapp
-   - send_whatsapp_confirmation
-   - send_whatsapp_update
-   - send_whatsapp_cancellation
-   - send_whatsapp_followup
+BUSINESS INFO:
+{meta}
 
-2. Email Tools:
-   - send_email
-   - send_email_confirmation
-   - send_email_update
-   - send_email_cancellation
-   - send_email_reminder
-   - send_email_followup
+DOCUMENTS:
+{docs_text}
 
-3. Calendar Tools:
-   - create_event
-   - update_event
-   - cancel_event
-
-RULES FOR TOOL CALLS:
-- If the user wants to book, schedule, reserve, or confirm an appointment → use create_event.
-- If the user wants to reschedule or change the time → use update_event.
-- If the user wants to cancel an appointment → use cancel_event.
-- If the user wants a reminder → use send_email_reminder or send_whatsapp.
-- If the user wants follow-up → pick the correct WhatsApp or Email follow-up tool.
-- ALWAYS output valid JSON when calling a tool.
-- JSON format MUST be:
-
-{{
-  "answer": "Your natural language response here",
-  "call_tool": {{
-        "name": "tool_name_here",
-        "params": {{ ... }}
-  }}
-}}
-
-- If no tool is needed, respond with only natural language and NO JSON.
-
-CONTEXT DOCUMENTS (use them if relevant):
-{docs_block}
+GUIDELINES:
+- Answer naturally in plain text.
+- DO NOT return JSON unless you are **very sure** the user wants an email, WhatsApp message, or appointment action.
+- For normal questions about services, pricing, hours, etc → plain text answer.
 
 USER MESSAGE:
 {user_message}
 
-INSTRUCTIONS:
-- Decide whether the user message needs a tool.
-- If a tool is needed, return ONLY JSON in the exact format above.
-- If no tool is needed, respond normally.
-Do NOT invent tools. Only use the listed tools.
+Now give the best possible helpful answer.
 """
+
 
 def generate_answer(
     *,
@@ -98,32 +82,34 @@ def generate_answer(
     n_results: int = 5,
     metadata_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Main RAG routine. Returns dict with reply + debug info."""
-    documents = vector_store.query_documents(
-        business_id=business_id,
-        query=user_message,
-        n_results=n_results,
-    )
-    logger.info(
-        "rag.query_completed",
-        business_id=business_id,
-        results=len(documents),
-        query=user_message,
-    )
 
-    prompt = _build_prompt(user_message, documents)
-    logger.debug("rag.prompt_built", business_id=business_id, prompt_preview=prompt[:400])
+    meta = metadata_context or {}
+    documents: List[Dict[str, Any]] = []
 
-    response_text = llm_service.generate(prompt)
-    logger.info(
-        "rag.llm_completed",
-        business_id=business_id,
-        has_docs=bool(documents),
-        response_preview=response_text[:200],
-    )
+    # Try vectorstore
+    try:
+        documents = vector_store.query_documents(
+            business_id=business_id,
+            query=user_message,
+            n_results=n_results,
+        )
+    except Exception as exc:
+        logger.error("rag.vectorstore_failed", error=str(exc))
+        documents = []
+
+    prompt = _build_prompt(user_message, documents, meta)
+
+    # Try LLM
+    try:
+        reply = llm_service.generate(prompt).strip()
+        if not reply:
+            reply = _fallback_from_metadata(user_message, meta)
+    except Exception as exc:
+        logger.error("rag.llm_failed", error=str(exc))
+        reply = _fallback_from_metadata(user_message, meta)
 
     return {
-        "reply": response_text.strip(),
+        "reply": reply,
         "documents_used": len(documents),
-        "metadata_context": metadata_context or {},
+        "metadata_context": meta,
     }

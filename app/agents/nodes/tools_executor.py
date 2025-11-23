@@ -1,132 +1,132 @@
 """
-Tools executor node for running MCP tools.
+Tools executor node for running MCP tools via the JSON `call_tool` protocol.
+
+Instead of calling WhatsApp / Email / Calendar directly (which are async),
+this node *plans* the tool call and encodes it as:
+
+{
+  "answer": "...",
+  "call_tool": { "name": "...", "params": {...} }
+}
+
+Then `tool_router` in `graph.py` actually performs the async work.
 """
-from typing import Dict, Any, List
+from __future__ import annotations
+
+from typing import Dict, Any, Optional
+import json
 import structlog
-from app.tools.whatsapp_mcp import send_whatsapp_message
-from app.tools.email_mcp import send_email
-from app.tools.calendar_mcp import generate_appointment_confirmation
 
 logger = structlog.get_logger(__name__)
 
 
-def extract_tool_requirements(user_message: str) -> Dict[str, Any]:
+def extract_tool_requirements(user_message: str, business_context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extract tool requirements from user message.
-    
-    Args:
-        user_message: User's message
-    
+    Extract a simple tool request from the user's message.
+
     Returns:
-        Dict with tool requirements (tool_type, recipient, content, etc.)
+        {
+          "tool_name": str | None,   # e.g. "send_whatsapp" | "send_email" | "create_event"
+          "params": dict,
+          "answer_text": str         # Human-facing confirmation sentence
+        }
     """
-    message_lower = user_message.lower()
-    
-    # TODO: Use LLM to extract structured information
-    # For now, simple keyword-based extraction
-    
-    requirements = {
-        "tool_type": None,
-        "recipient": None,
-        "content": None
+    msg = user_message.lower()
+    params: Dict[str, Any] = {}
+    tool_name: Optional[str] = None
+    answer_text = "Okay, I'll handle that."
+
+    # Very simple heuristics – you can improve later with LLM-based extraction
+    if "whatsapp" in msg or "message" in msg or "text" in msg:
+        tool_name = "send_whatsapp"
+        params["to"] = business_context.get("contact_phone")
+        params["message"] = user_message
+        answer_text = "Got it – I’ll send a WhatsApp message for you."
+
+    elif "email" in msg or "mail" in msg:
+        tool_name = "send_email"
+        params["to"] = business_context.get("contact_email")
+        params["subject"] = f"Message from {business_context.get('name', 'BizGenie')} customer"
+        params["body"] = user_message
+        answer_text = "Got it – I’ll send an email for you."
+
+    elif "appointment" in msg and ("confirm" in msg or "confirmation" in msg or "invite" in msg):
+        tool_name = "create_event"
+        params["title"] = f"Appointment for {business_context.get('name', 'BizGenie')}"
+        # NOTE: In a real system you’d parse actual time, attendees, etc.
+        params["start_dt"] = None
+        params["end_dt"] = None
+        params["description"] = user_message
+        params["attendees_emails"] = (
+            [business_context.get("contact_email")]
+            if business_context.get("contact_email")
+            else []
+        )
+        params["location"] = business_context.get("address")
+        params["send_via_email"] = True
+        params["send_via_whatsapp"] = False
+        answer_text = "I’ll generate an appointment invite for this."
+
+    return {
+        "tool_name": tool_name,
+        "params": params,
+        "answer_text": answer_text,
     }
-    
-    if "whatsapp" in message_lower or "message" in message_lower:
-        requirements["tool_type"] = "whatsapp"
-    elif "email" in message_lower:
-        requirements["tool_type"] = "email"
-    elif "appointment" in message_lower and "confirm" in message_lower:
-        requirements["tool_type"] = "appointment_confirmation"
-    
-    return requirements
 
 
 def tools_executor_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    LangGraph node for executing MCP tools.
-    
-    Args:
-        state: Current agent state
-    
-    Returns:
-        Updated state with tool execution results
-    """
-    user_message = state.get("user_message", "")
-    business_context = state.get("business_context", {})
-    tool_actions = state.get("tool_actions", [])
-    
-    try:
-        requirements = extract_tool_requirements(user_message)
-        tool_type = requirements.get("tool_type")
-        
-        if not tool_type:
-            state["response"] = "I understand you want me to send a message, but I need more details. Please specify whether you want to send an email or WhatsApp message, and provide the recipient and message content."
-            state["next_node"] = "end"
-            return state
-        
-        result = None
-        
-        if tool_type == "whatsapp":
-            # TODO: Extract recipient and message from user_message or state
-            recipient = requirements.get("recipient") or business_context.get("contact_phone", "")
-            message = requirements.get("content") or user_message
-            
-            if not recipient:
-                state["response"] = "I need a phone number to send a WhatsApp message. Please provide the recipient's phone number."
-                state["next_node"] = "end"
-                return state
-            
-            result = send_whatsapp_message(recipient, message)
-            tool_actions.append({
-                "tool": "whatsapp",
-                "action": "send_message",
-                "result": result
-            })
-            
-        elif tool_type == "email":
-            # TODO: Extract recipient, subject, and body from user_message or state
-            recipient = requirements.get("recipient") or business_context.get("contact_email", "")
-            subject = f"Message from {business_context.get('name', 'BizGenie')}"
-            body = requirements.get("content") or user_message
-            
-            if not recipient:
-                state["response"] = "I need an email address to send an email. Please provide the recipient's email address."
-                state["next_node"] = "end"
-                return state
-            
-            result = send_email(recipient, subject, body)
-            tool_actions.append({
-                "tool": "email",
-                "action": "send_email",
-                "result": result
-            })
-            
-        elif tool_type == "appointment_confirmation":
-            # TODO: Extract appointment_id from state or user_message
-            appointment_id = state.get("appointment_id")
-            if appointment_id:
-                result = generate_appointment_confirmation(appointment_id)
-                tool_actions.append({
-                    "tool": "calendar",
-                    "action": "generate_confirmation",
-                    "result": result
-                })
-        
-        if result and result.get("success"):
-            state["response"] = f"Action completed successfully. {tool_type} has been sent/processed."
-        else:
-            error_msg = result.get("error", "Unknown error") if result else "Tool execution failed"
-            state["response"] = f"I encountered an issue: {error_msg}. Please try again or contact support."
-        
-        state["tool_actions"] = tool_actions
-        state["next_node"] = "end"
-        
-        logger.info("Tool executed", tool_type=tool_type, success=result.get("success") if result else False)
-        
-    except Exception as e:
-        logger.error("Error in tools executor node", error=str(e))
-        state["response"] = "I encountered an error while executing the requested action. Please try again."
-        state["next_node"] = "end"
-    
-    return state
+    LangGraph node for tool planning.
 
+    - Looks at user_message and business_context
+    - Decides which tool to call (if any)
+    - Encodes a JSON `call_tool` payload in `state["response"]`
+    - Actual execution is handled by `tool_router` in graph.py
+    """
+    user_message = state.get("user_message", "") or ""
+    business_context = state.get("business_context", {}) or {}
+    tool_actions = state.get("tool_actions", []) or []
+
+    try:
+        extracted = extract_tool_requirements(user_message, business_context)
+        tool_name = extracted["tool_name"]
+        params = extracted["params"]
+        answer_text = extracted["answer_text"]
+
+        if not tool_name:
+            # No clear tool intent – ask user for clarification
+            state["response"] = (
+                "I can send an email, WhatsApp message, or create an appointment invite. "
+                "Please tell me which one you want and who it should go to."
+            )
+            state["tool_actions"] = tool_actions
+            return state
+
+        call_tool = {
+            "name": tool_name,
+            "params": params,
+        }
+
+        payload = {
+            "answer": answer_text,
+            "call_tool": call_tool,
+        }
+
+        state["response"] = json.dumps(payload)
+        # We *plan* the tool here; graph.tool_router will append the real tool actions
+        state["tool_actions"] = tool_actions
+
+        logger.info(
+            "tools_executor.planned",
+            tool_name=tool_name,
+            params=params,
+        )
+
+    except Exception as exc:  # pragma: no cover
+        logger.error("tools_executor.error", error=str(exc))
+        state["response"] = (
+            "I encountered an error while preparing that action. "
+            "Please try again or contact us directly."
+        )
+
+    return state

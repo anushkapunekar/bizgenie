@@ -1,201 +1,96 @@
 """
-WhatsApp MCP tool powered by UltraMsg API.
+WhatsApp MCP Tool (UltraMsg Version)
+Supports:
+- send_whatsapp_message
+- confirmation
+- update
+- cancellation
+- followup
 """
-from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-
-import httpx
+import os
+import aiohttp
 import structlog
-
-from app.config import get_settings
+import json
+from typing import Optional
 
 logger = structlog.get_logger(__name__)
-settings = get_settings()
+
+ULTRA_INSTANCE = os.getenv("ULTRAMSG_INSTANCE_ID", "")
+ULTRA_TOKEN = os.getenv("ULTRAMSG_TOKEN", "")
+ULTRA_BASE = os.getenv("ULTRAMSG_API_BASE", "").rstrip("/")
+
+WHATSAPP_ENABLED = os.getenv("WHATSAPP_MCP_ENABLED", "false").lower() == "true"
 
 
-def _mask(token: Optional[str]) -> Optional[str]:
-    if not token:
-        return None
-    if len(token) <= 6:
-        return "*" * len(token)
-    return f"{token[:3]}{'*' * (len(token) - 6)}{token[-3:]}"
+async def _ultramsg_send(to: str, message: str) -> dict:
+    """UltraMsg message sender."""
+    if not WHATSAPP_ENABLED:
+        logger.warning("WhatsApp MCP disabled")
+        return {"status": "disabled"}
 
+    if not ULTRA_INSTANCE or not ULTRA_TOKEN or not ULTRA_BASE:
+        logger.error("UltraMsg not configured")
+        return {"status": "error", "detail": "Misconfigured UltraMsg API"}
 
-def _is_enabled() -> bool:
-    return bool(settings.WHATSAPP_MCP_ENABLED and settings.ULTRAMSG_TOKEN)
+    sender_number = os.getenv("ULTRAMSG_PHONE", "")
+    if not sender_number:
+        logger.error("ULTRAMSG_PHONE missing in .env")
+        return {"status": "error", "detail": "Missing sender WhatsApp number"}
 
-
-async def _post_whatsapp(form_payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    UltraMsg uses form-data, not JSON.
-    """
-    if not _is_enabled():
-        return {
-            "success": False,
-            "message": "WhatsApp MCP disabled or misconfigured",
-            "details": {"enabled": settings.WHATSAPP_MCP_ENABLED},
-        }
-
-    instance_id = settings.ULTRAMSG_INSTANCE_ID
-    token = settings.ULTRAMSG_TOKEN
-    api_base = settings.ULTRAMSG_API_BASE or "https://api.ultramsg.com"
-
-    if not instance_id or not token:
-        return {
-            "success": False,
-            "message": "UltraMsg credentials missing",
-            "details": {"instance_id": instance_id, "token": bool(token)},
-        }
-
-    url = f"{api_base}/{instance_id}/messages"
-
-    logger.info(
-        "whatsapp.request",
-        url=url,
-        payload=form_payload,
-        token=_mask(token),
-    )
-
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            response = await client.post(url, data=form_payload)
-        except httpx.HTTPError as exc:
-            logger.error("whatsapp.http_error", error=str(exc))
-            return {
-                "success": False,
-                "message": "HTTP error sending WhatsApp message",
-                "details": {"error": str(exc)},
-            }
-
-    if response.status_code >= 400:
-        logger.error(
-            "whatsapp.http_failure",
-            status=response.status_code,
-            body=response.text,
-        )
-        return {
-            "success": False,
-            "message": "UltraMsg API error",
-            "details": {
-                "status": response.status_code,
-                "body": response.text,
-            },
-        }
-
-    data = response.json()
-    logger.info("whatsapp.http_success", response=data)
-    return {
-        "success": True,
-        "message": "WhatsApp message sent",
-        "details": data,
-    }
-
-
-def _format_body(message: str) -> str:
-    sender = settings.WHATSAPP_SENDER_NAME or "BizGenie"
-    footer = "\n\nReply STOP to unsubscribe."
-    return f"{sender}:\n{message.strip()}{footer}"
-
-
-async def send_whatsapp_message(
-    to: str,
-    message: str,
-    type: str = "text",
-    template: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """
-    UltraMsg does NOT support WhatsApp templates.
-    We fallback to text messages always.
-    """
-    formatted = _format_body(message)
+    url = f"{ULTRA_BASE}/messages/chat"
 
     payload = {
-        "token": settings.ULTRAMSG_TOKEN,
+        "token": ULTRA_TOKEN,
         "to": to,
-        "body": formatted,
+        "from": sender_number,  # required by UltraMsg
+        "body": message,
     }
 
-    return await _post_whatsapp(payload)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=payload) as resp:
+                text = await resp.text()
+
+        logger.warning("ultramsg.debug_raw_response", raw=text)
+
+        try:
+            data = json.loads(text)
+        except:
+            logger.error("ultramsg.invalid_json", payload=text)
+            return {"status": "error", "detail": "Invalid JSON from UltraMsg", "raw": text}
+
+        logger.info("ultramsg.sent", response=data)
+        return data
+
+    except Exception as e:
+        logger.error("ultramsg.error", error=str(e))
+        return {"status": "error", "detail": str(e)}
 
 
-async def send_whatsapp_blast(numbers: List[str], message: str) -> Dict[str, Any]:
-    """Send a campaign blast to multiple numbers."""
-    results = []
-    for number in numbers:
-        result = await send_whatsapp_message(number, message)
-        results.append({"number": number, "result": result})
+# ----------------------------------------------------------
+# HIGH LEVEL TOOL FUNCTIONS (Used by LangGraph tool router)
+# ----------------------------------------------------------
 
-    success_count = sum(1 for r in results if r["result"]["success"])
-    logger.info(
-        "whatsapp.blast_summary",
-        requested=len(numbers),
-        succeeded=success_count,
-    )
-
-    return {
-        "success": success_count == len(numbers),
-        "message": f"Sent WhatsApp blast to {success_count}/{len(numbers)} recipients",
-        "details": results,
-    }
-
-# ---------------------------------------------------------
-# ADVANCED WHATSAPP ACTIONS FOR TOOL ROUTER
-# These wrap send_whatsapp_message() but provide clearer
-# names for confirmation/update/cancellation/followup.
-# ---------------------------------------------------------
-
-async def send_whatsapp_confirmation(to: str, message: str = None) -> Dict[str, Any]:
-    """Send a WhatsApp confirmation message."""
-    final_msg = message or "Your appointment is confirmed! ✔️"
-    return await send_whatsapp_message(to=to, message=final_msg)
+async def send_whatsapp_message(to: str, message: str):
+    return await _ultramsg_send(to, message)
 
 
-async def send_whatsapp_update(to: str, message: str = None) -> Dict[str, Any]:
-    """Send a WhatsApp update message."""
-    final_msg = message or "Your appointment has been updated. 🔄"
-    return await send_whatsapp_message(to=to, message=final_msg)
+async def send_whatsapp_confirmation(to: str, message: Optional[str] = None):
+    msg = message or "Your appointment has been confirmed. Thank you!"
+    return await _ultramsg_send(to, msg)
 
 
-async def send_whatsapp_cancellation(to: str, message: str = None) -> Dict[str, Any]:
-    """Send a WhatsApp cancellation message."""
-    final_msg = message or "Your appointment has been cancelled. ❌"
-    return await send_whatsapp_message(to=to, message=final_msg)
+async def send_whatsapp_update(to: str, message: Optional[str] = None):
+    msg = message or "Your appointment has been updated."
+    return await _ultramsg_send(to, msg)
 
 
-async def send_whatsapp_followup(to: str, message: str = None) -> Dict[str, Any]:
-    """Send a follow-up WhatsApp message."""
-    final_msg = message or "Just checking in! Let me know if you need anything. 😊"
-    return await send_whatsapp_message(to=to, message=final_msg)
+async def send_whatsapp_cancellation(to: str, message: Optional[str] = None):
+    msg = message or "Your appointment has been cancelled."
+    return await _ultramsg_send(to, msg)
 
 
-async def test_whatsapp() -> Dict[str, Any]:
-    """Validate UltraMsg configuration without sending a message."""
-    details = {
-        "enabled": settings.WHATSAPP_MCP_ENABLED,
-        "instance_id": settings.ULTRAMSG_INSTANCE_ID,
-        "token_present": bool(settings.ULTRAMSG_TOKEN),
-        "api_base": settings.ULTRAMSG_API_BASE,
-        "sender_name": settings.WHATSAPP_SENDER_NAME,
-    }
-
-    ok = all(
-        [
-            settings.WHATSAPP_MCP_ENABLED,
-            settings.ULTRAMSG_INSTANCE_ID,
-            settings.ULTRAMSG_TOKEN,
-        ]
-    )
-
-    message = (
-        "UltraMsg WhatsApp MCP configuration valid"
-        if ok else
-        "UltraMsg WhatsApp MCP configuration incomplete"
-    )
-
-    logger.info("whatsapp.test", **details)
-    return {
-        "success": ok,
-        "message": message,
-        "details": details,
-    }
+async def send_whatsapp_followup(to: str, message: Optional[str] = None):
+    msg = message or "Hope your experience was great! Let us know if you need anything else."
+    return await _ultramsg_send(to, msg)

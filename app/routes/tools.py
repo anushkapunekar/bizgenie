@@ -13,7 +13,14 @@ from pydantic import BaseModel, EmailStr, Field
 from app.config import get_settings
 from app.tools.calendar_mcp import create_event
 from app.tools.email_mcp import send_daily_summary, send_email
-from app.tools.whatsapp_mcp import send_whatsapp_blast, send_whatsapp_message
+from app.tools.whatsapp_mcp import (
+    send_whatsapp_message,
+    send_whatsapp_confirmation,
+    send_whatsapp_update,
+    send_whatsapp_cancellation,
+    send_whatsapp_followup
+)
+
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 logger = structlog.get_logger(__name__)

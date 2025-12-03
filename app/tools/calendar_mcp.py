@@ -1,231 +1,156 @@
 """
-Calendar MCP utilities: create events, generate ICS, send notifications.
-Updated with lightweight update_event and cancel_event wrappers.
+Calendar MCP Tool — Final Working Version
+Handles:
+- create_event
+- update_event
+- cancel_event
+Synchronizes DB + emails + WhatsApp
 """
-from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from email.utils import formatdate
-from typing import Any, Dict, List, Optional
-
+import os
 import structlog
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
-from app.config import get_settings
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import Appointment, Business
 from app.tools.email_mcp import send_email
 from app.tools.whatsapp_mcp import send_whatsapp_message
 
 logger = structlog.get_logger(__name__)
-settings = get_settings()
+
+CALENDAR_ENABLED = os.getenv("CALENDAR_MCP_ENABLED", "false").lower() == "true"
 
 
-def generate_ics_event(
-    *,
-    title: str,
-    start_dt: datetime,
-    end_dt: datetime,
-    description: str,
-    location: Optional[str] = None,
-    attendees: Optional[List[str]] = None,
-) -> str:
-    """Return ICS file content as string."""
-    uid = f"{uuid.uuid4()}@bizgenie"
-
-    def fmt(dt: datetime) -> str:
-        return dt.strftime("%Y%m%dT%H%M%SZ")
-
-    lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//BizGenie//Calendar MCP//EN",
-        "BEGIN:VEVENT",
-        f"UID:{uid}",
-        f"DTSTAMP:{fmt(start_dt)}",
-        f"DTSTART:{fmt(start_dt)}",
-        f"DTEND:{fmt(end_dt)}",
-        f"SUMMARY:{title}",
-        f"DESCRIPTION:{description}",
-    ]
-    if location:
-        lines.append(f"LOCATION:{location}")
-    for attendee in attendees or []:
-        lines.append(f"ATTENDEE;RSVP=TRUE:mailto:{attendee}")
-    lines.append("END:VEVENT")
-    lines.append("END:VCALENDAR")
-
-    return "\n".join(lines)
+def _get_db():
+    return SessionLocal()
 
 
+def _parse_dt(date: Optional[str], time: Optional[str]) -> Optional[datetime]:
+    if not date or not time:
+        return None
+    try:
+        return datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+    except:
+        return None
+
+
+# ----------------------------------------------------------------
+# CREATE EVENT
+# ----------------------------------------------------------------
 async def create_event(
     title: str,
-    start_dt: datetime,
-    end_dt: datetime,
-    description: str,
-    attendees_emails: List[str],
-    location: Optional[str] = None,
+    date: Optional[str] = None,
+    time: Optional[str] = None,
+    description: Optional[str] = None,
+    business_id: Optional[int] = None,
+    customer_name: Optional[str] = None,
+    customer_email: Optional[str] = None,
     send_via_email: bool = True,
-    send_via_whatsapp: bool = False,
-) -> Dict[str, Any]:
-    """Create an event and optionally send via email/WhatsApp."""
-    if not settings.CALENDAR_MCP_ENABLED:
-        return {
-            "success": False,
-            "message": "Calendar MCP disabled",
-            "details": {},
-        }
+    send_via_whatsapp: bool = True,
+    **kwargs
+):
+    if not CALENDAR_ENABLED:
+        logger.warning("Calendar MCP disabled")
+        return {"status": "disabled"}
 
-    ics_content = generate_ics_event(
-        title=title,
-        start_dt=start_dt,
-        end_dt=end_dt,
-        description=description,
-        location=location,
-        attendees=attendees_emails,
+    db = _get_db()
+
+    business = None
+    if business_id:
+        business = db.query(Business).filter(Business.id == business_id).first()
+
+    start_dt = _parse_dt(date, time)
+    if not start_dt:
+        logger.error("Invalid datetime for create_event")
+        return {"status": "error", "detail": "Invalid date/time"}
+
+    end_dt = start_dt + timedelta(minutes=45)
+
+    # store in DB
+    appt = Appointment(
+        business_id=business_id,
+        customer_name=customer_name or "Guest",
+        customer_email=customer_email,
+        start_datetime=start_dt,
+        end_datetime=end_dt,
+        notes=description,
     )
+    db.add(appt)
+    db.commit()
+    db.refresh(appt)
 
-    details: Dict[str, Any] = {
-        "title": title,
-        "start": start_dt.isoformat(),
-        "end": end_dt.isoformat(),
-        "attendees": attendees_emails,
-        "location": location,
-    }
-
-    if send_via_email and attendees_emails:
-        attachments = [
-            {
-                "filename": f"{title}.ics",
-                "mime_type": "text/calendar",
-                "content": ics_content.encode("utf-8"),
-            }
-        ]
-        email_body = (
-            f"You have a new event:\n\n{title}\n"
-            f"Start: {start_dt}\nEnd: {end_dt}\n\n{description}"
-        )
-        for attendee in attendees_emails:
-            result = await send_email(
-                to=attendee,
-                subject=f"New Event: {title}",
-                body=email_body,
-                attachments=attachments,
+    # send email
+    if send_via_email and business:
+        try:
+            await send_email(
+                to=customer_email,
+                subject="Your Appointment is Confirmed",
+                body=f"Your appointment at {business.name} is booked for {start_dt}."
             )
-            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
+        except Exception as e:
+            logger.error("calendar.email_failed", error=str(e))
 
-    if send_via_whatsapp:
-        message = (
-            f"Event Confirmation:\n{title}\nStart: {start_dt}\nEnd: {end_dt}\n"
-            f"{description}\nLocation: {location or 'TBD'}"
-        )
-        logger.info("calendar.whatsapp_sent", message_preview=message[:160])
-
-    return {"success": True, "message": "Event created", "details": details}
-
-
-# --------------------------------------------------------
-# NEW: Lightweight UPDATE EVENT
-# --------------------------------------------------------
-async def update_event(
-    *,
-    title: str,
-    new_start: datetime,
-    new_end: datetime,
-    description: str,
-    attendees_emails: List[str],
-    location: Optional[str] = None,
-    send_via_email: bool = True,
-    send_via_whatsapp: bool = False,
-) -> Dict[str, Any]:
-    """Send updated event details to attendees (lightweight wrapper)."""
-
-    details = {
-        "title": title,
-        "new_start": new_start.isoformat(),
-        "new_end": new_end.isoformat(),
-        "attendees": attendees_emails,
-        "location": location,
-    }
-
-    # Email update
-    if send_via_email and attendees_emails:
-        email_body = (
-            f"Your event '{title}' has been updated.\n\n"
-            f"New Start: {new_start}\nNew End: {new_end}\n\n{description}"
-        )
-        for attendee in attendees_emails:
-            result = await send_email(
-                to=attendee,
-                subject=f"Updated Event: {title}",
-                body=email_body,
+    # send WhatsApp
+    if send_via_whatsapp and business and business.contact_phone:
+        try:
+            await send_whatsapp_message(
+                to=business.contact_phone,
+                message=f"New Appointment:\n{appt.customer_name}\n{start_dt}"
             )
-            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
+        except Exception as e:
+            logger.error("calendar.whatsapp_failed", error=str(e))
 
-    # WhatsApp update
-    if send_via_whatsapp:
-        message = (
-            f"Event Updated:\n{title}\nNew Start: {new_start}\nNew End: {new_end}\n"
-            f"{description}\nLocation: {location or 'TBD'}"
-        )
-        logger.info("calendar.whatsapp_update", message_preview=message[:160])
-
-    return {"success": True, "message": "Event updated", "details": details}
-
-
-# --------------------------------------------------------
-# NEW: Lightweight CANCEL EVENT
-# --------------------------------------------------------
-async def cancel_event(
-    *,
-    title: str,
-    attendees_emails: List[str],
-    send_via_email: bool = True,
-    send_via_whatsapp: bool = False,
-    reason: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Notify attendees that the event is cancelled."""
-
-    details = {
-        "title": title,
-        "reason": reason or "No longer available",
-        "attendees": attendees_emails,
-    }
-
-    # Email cancellation
-    if send_via_email and attendees_emails:
-        email_body = (
-            f"Your event '{title}' has been cancelled.\n\n"
-            f"Reason: {reason or 'No longer available'}"
-        )
-        for attendee in attendees_emails:
-            result = await send_email(
-                to=attendee,
-                subject=f"Event Cancelled: {title}",
-                body=email_body,
-            )
-            details.setdefault("emails_sent", []).append({"to": attendee, "result": result})
-
-    # WhatsApp cancellation
-    if send_via_whatsapp:
-        message = (
-            f"Event Cancelled:\n{title}\nReason: {reason or 'No longer available'}"
-        )
-        logger.info("calendar.whatsapp_cancel", message_preview=message[:160])
-
-    return {"success": True, "message": "Event cancelled", "details": details}
-
-
-async def test_calendar() -> Dict[str, Any]:
-    """Verify calendar settings."""
-    details = {
-        "enabled": settings.CALENDAR_MCP_ENABLED,
-        "sender": settings.CALENDAR_SENDER_EMAIL,
-    }
-    ok = bool(settings.CALENDAR_MCP_ENABLED and settings.CALENDAR_SENDER_EMAIL)
-    msg = "Calendar MCP ready" if ok else "Calendar MCP configuration incomplete"
-    logger.info("calendar.test", **details)
+    logger.info("calendar.created", appt_id=appt.id)
 
     return {
-        "success": ok,
-        "message": msg,
-        "details": details,
+        "status": "success",
+        "event_id": appt.id,
+        "start": str(start_dt),
+        "end": str(end_dt),
     }
+
+
+# ----------------------------------------------------------------
+# UPDATE EVENT
+# ----------------------------------------------------------------
+async def update_event(event_id: int, date: str = None, time: str = None, **kwargs):
+    if not CALENDAR_ENABLED:
+        return {"status": "disabled"}
+    db = _get_db()
+
+    appt = db.query(Appointment).filter(Appointment.id == event_id).first()
+    if not appt:
+        return {"status": "error", "detail": "Appointment not found"}
+
+    new_start = _parse_dt(date, time)
+    if not new_start:
+        return {"status": "error", "detail": "Invalid date/time"}
+
+    appt.start_datetime = new_start
+    appt.end_datetime = new_start + timedelta(minutes=45)
+    db.commit()
+
+    logger.info("calendar.updated", appt_id=appt.id)
+    return {"status": "updated", "event_id": appt.id}
+
+
+# ----------------------------------------------------------------
+# CANCEL EVENT
+# ----------------------------------------------------------------
+async def cancel_event(event_id: int, **kwargs):
+    if not CALENDAR_ENABLED:
+        return {"status": "disabled"}
+    db = _get_db()
+
+    appt = db.query(Appointment).filter(Appointment.id == event_id).first()
+    if not appt:
+        return {"status": "error", "detail": "Appointment not found"}
+
+    db.delete(appt)
+    db.commit()
+
+    logger.info("calendar.cancelled", event_id=event_id)
+    return {"status": "cancelled", "event_id": event_id}

@@ -54,7 +54,7 @@ class Appointment(Base):
     customer_phone = Column(String(50), nullable=True)
     appointment_date = Column(DateTime(timezone=True), nullable=False, index=True)
     service = Column(String(200), nullable=True)
-    status = Column(String(50), default="pending")  # pending, confirmed, cancelled, completed
+    status = Column(String(50), default="scheduled")  # pending, confirmed, cancelled, completed
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

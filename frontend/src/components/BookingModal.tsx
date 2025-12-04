@@ -2,7 +2,21 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { appointmentsApi } from "../services/api";
 
-export default function BookingModal({ open, onClose, business, profile, onSuccess }) {
+interface BookingModalProps {
+  open: boolean;
+  onClose: () => void;
+  business: { id: number; name: string };
+  profile: { name: string; email?: string };
+  onSuccess: (appointment: any) => void;
+}
+
+export default function BookingModal({
+  open,
+  onClose,
+  business,
+  profile,
+  onSuccess,
+}: BookingModalProps) {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [loading, setLoading] = useState(false);
@@ -16,7 +30,7 @@ export default function BookingModal({ open, onClose, business, profile, onSucce
     setLoading(true);
 
     try {
-      const response = await appointmentsApi.create({
+      const appt = await appointmentsApi.create({
         business_id: business.id,
         customer_name: profile.name,
         customer_email: profile.email || null,
@@ -24,10 +38,11 @@ export default function BookingModal({ open, onClose, business, profile, onSucce
         time,
       });
 
-      onSuccess(response);
+      onSuccess(appt);
       onClose();
     } catch (err) {
-      alert("Failed to book appointment. Check backend logs.");
+      console.error("Booking error:", err);
+      alert("Failed to book appointment. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -37,15 +52,23 @@ export default function BookingModal({ open, onClose, business, profile, onSucce
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div className="bg-white w-full max-w-md rounded-xl shadow-lg p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold">Book Appointment</h2>
-          <button onClick={onClose}>
-            <X className="h-5 w-5 text-gray-500 hover:text-gray-800" />
+          <h2 className="text-lg font-semibold">
+            Book an appointment at {business.name}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-800"
+          >
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-gray-700">Select date</label>
+            <label className="text-sm font-medium text-gray-700">
+              Select date
+            </label>
             <input
               type="date"
               className="input mt-1 w-full"
@@ -56,7 +79,9 @@ export default function BookingModal({ open, onClose, business, profile, onSucce
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Select time</label>
+            <label className="text-sm font-medium text-gray-700">
+              Select time
+            </label>
             <input
               type="time"
               className="input mt-1 w-full"

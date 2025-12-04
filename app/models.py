@@ -20,12 +20,19 @@ class Business(Base):
     contact_phone = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+   
     # Relationships
     documents = relationship("Document", back_populates="business", cascade="all, delete-orphan")
     appointments = relationship("Appointment", back_populates="business", cascade="all, delete-orphan")
     leads = relationship("Lead", back_populates="business", cascade="all, delete-orphan")
-
+    
+     # NEW: each business can have one Google Drive connection
+    google_drive_token = relationship(
+        "GoogleDriveToken",
+        back_populates="business",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 class Document(Base):
     """Document model for storing business documents."""
@@ -78,3 +85,21 @@ class Lead(Base):
     # Relationships
     business = relationship("Business", back_populates="leads")
 
+    
+class GoogleDriveToken(Base):
+    """
+    Stores Google OAuth tokens per business for Drive sync.
+    """
+    __tablename__ = "google_drive_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, unique=True, index=True)
+
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True)
+    token_expiry = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    business = relationship("Business", back_populates="google_drive_token")

@@ -15,15 +15,13 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 60000,
+  timeout: 60000, // 60 second timeout for LLM responses
 });
 
-// Request interceptor
+// Request logging
 api.interceptors.request.use(
   (config) => {
-    console.log(
-      `API Request: ${config.method?.toUpperCase()} ${config.url}`
-    );
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
@@ -32,12 +30,10 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor
+// Response logging
 api.interceptors.response.use(
   (response) => {
-    console.log(
-      `API Response: ${response.status} ${response.config.url}`
-    );
+    console.log(`API Response: ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
@@ -51,65 +47,67 @@ api.interceptors.response.use(
   }
 );
 
-// -----------------------------
-// BUSINESS API
-// -----------------------------
+// Business API
 export const businessApi = {
   register: async (data: BusinessCreate): Promise<Business> => {
-    const r = await api.post<Business>("/business/register", data);
-    return r.data;
+    const response = await api.post<Business>("/business/register", data);
+    return response.data;
   },
 
   login: async (payload: BusinessLoginPayload): Promise<Business> => {
-    const r = await api.post<Business>("/business/login", payload);
-    return r.data;
+    const response = await api.post<Business>("/business/login", payload);
+    return response.data;
   },
 
   get: async (id: number): Promise<Business> => {
-    const r = await api.get<Business>(`/business/${id}`);
-    return r.data;
+    const response = await api.get<Business>(`/business/${id}`);
+    return response.data;
   },
 
-  update: async (id: number, data: Partial<BusinessCreate>): Promise<Business> => {
-    const r = await api.patch<Business>(`/business/update/${id}`, data);
-    return r.data;
+  update: async (
+    id: number,
+    data: Partial<BusinessCreate>
+  ): Promise<Business> => {
+    const response = await api.patch<Business>(`/business/update/${id}`, data);
+    return response.data;
   },
 
-  uploadDocument: async (businessId: number, file: File): Promise<Document> => {
+  uploadDocument: async (
+    businessId: number,
+    file: File
+  ): Promise<Document> => {
     const formData = new FormData();
     formData.append("file", file);
-
-    const r = await api.post<Document>(
+    const response = await api.post<Document>(
       `/business/upload-docs?business_id=${businessId}`,
       formData,
       {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120000,
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        timeout: 120000, // 2 minutes for file upload
       }
     );
-
-    return r.data;
+    return response.data;
   },
 
   getDocuments: async (businessId: number): Promise<Document[]> => {
-    const r = await api.get<Document[]>(`/business/${businessId}/documents`);
-    return r.data;
+    const response = await api.get<Document[]>(
+      `/business/${businessId}/documents`
+    );
+    return response.data;
   },
 };
 
-// -----------------------------
-// CHAT API
-// -----------------------------
+// Chat API
 export const chatApi = {
   sendMessage: async (request: ChatRequest): Promise<ChatResponse> => {
-    const r = await api.post<ChatResponse>("/chat/", request);
-    return r.data;
+    const response = await api.post<ChatResponse>("/chat/", request);
+    return response.data;
   },
 };
 
-// -----------------------------
-// APPOINTMENTS API
-// -----------------------------
+// Appointment API (Mode A: UI booking → backend)
 export const appointmentsApi = {
   create: async (payload: {
     business_id: number;
@@ -118,17 +116,15 @@ export const appointmentsApi = {
     date: string;
     time: string;
   }) => {
-    const r = await api.post("/appointments/", payload);
-    return r.data;
+    const response = await api.post("/appointments/", payload);
+    return response.data;
   },
 };
 
-// -----------------------------
-// HEALTH CHECK
-// -----------------------------
+// Health check
 export const healthCheck = async (): Promise<{ status: string }> => {
-  const r = await api.get<{ status: string }>("/health");
-  return r.data;
+  const response = await api.get<{ status: string }>("/health");
+  return response.data;
 };
 
 export default api;

@@ -102,6 +102,14 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None
 
 
+class AppointmentCreate(BaseModel):
+    business_id: int
+    customer_name: str
+    customer_email: str | None = None
+    date: str  # Format: YYYY-MM-DD
+    time: str  # Format: HH:MM
+
+
 class AppointmentRequest(BaseModel):
     """Schema for appointment request."""
     business_id: int
@@ -153,4 +161,6 @@ class LeadResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        orm_mode =True
+        
 

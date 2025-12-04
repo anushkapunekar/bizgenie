@@ -86,6 +86,62 @@ class VectorStore:
             self.embedding_model = None
 
     # ------------------------------------------------------------------
+    # Helper for adding a single PDF (bytes) – used by Google Drive sync
+    # ------------------------------------------------------------------
+    def add_document(
+        self,
+        business_id: int,
+        filename: str,
+        content_bytes: bytes,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Add a PDF (as raw bytes) to the vector store.
+
+        - Writes bytes to a temp .pdf
+        - Uses PyPDFLoader to load pages
+        - Each page becomes a document with metadata
+        - Then reuses self.add_documents(...)
+        """
+        try:
+            from langchain_community.document_loaders import PyPDFLoader  # type: ignore
+            import tempfile
+        except Exception as e:
+            logger.error("PyPDFLoader not available, cannot index PDF", error=str(e))
+            return False
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(content_bytes)
+                tmp.flush()
+                loader = PyPDFLoader(tmp.name)
+                pages = loader.load()
+        except Exception as e:
+            logger.error("Failed to load PDF for vectorization", error=str(e))
+            return False
+
+        docs: List[Dict[str, Any]] = []
+        base_meta = metadata or {}
+        for i, page in enumerate(pages):
+            docs.append(
+                {
+                    "id": f"gdrive-{business_id}-{filename}-{i}",
+                    "text": page.page_content,
+                    "metadata": {
+                        "filename": filename,
+                        "page": i + 1,
+                        **base_meta,
+                    },
+                }
+            )
+
+        if not docs:
+            logger.warning("No pages extracted from PDF, nothing to index", filename=filename)
+            return False
+
+        return self.add_documents(business_id=business_id, documents=docs)
+
+    # ------------------------------------------------------------------
     # Simple fallback implementation
     # ------------------------------------------------------------------
     def _simple_path(self, business_id: int) -> Path:

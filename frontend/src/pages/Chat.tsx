@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Bot, User, Loader2, Edit3 } from "lucide-react";
 import { chatApi, businessApi } from "../services/api";
 import type { Message, Business, ChatProfile } from "../types";
-import { getApiErrorMessage } from "../utils/errors";
 import BookingModal from "../components/BookingModal";
 
 const CHAT_PROFILE_STORAGE_KEY = "bizgenie.chatProfile";
@@ -13,7 +12,10 @@ const getStoredProfile = (): ChatProfile => {
     const raw = localStorage.getItem(CHAT_PROFILE_STORAGE_KEY);
     if (!raw) return { name: "" };
     const parsed = JSON.parse(raw);
-    return { name: parsed.name || "", email: parsed.email || "" };
+    return {
+      name: parsed.name || "",
+      email: parsed.email || "",
+    };
   } catch {
     return { name: "" };
   }
@@ -53,6 +55,14 @@ export default function Chat() {
 
   const initialProfile = useMemo(() => getStoredProfile(), []);
   const [profile, setProfile] = useState<ChatProfile>(initialProfile);
+  const [profileDraft, setProfileDraft] = useState({
+    name: initialProfile.name,
+    email: initialProfile.email ?? "",
+  });
+  const [profileEditorOpen, setProfileEditorOpen] = useState(
+    () => !initialProfile.name
+  );
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,7 +108,7 @@ export default function Chat() {
             parsed.messages.map((m) => ({
               ...m,
               timestamp: new Date(m.timestamp),
-            })) as any
+            }))
           );
         }
 
@@ -106,6 +116,10 @@ export default function Chat() {
 
         if (parsed.profile) {
           setProfile(parsed.profile);
+          setProfileDraft({
+            name: parsed.profile.name,
+            email: parsed.profile.email ?? "",
+          });
         }
       } catch (err) {
         console.error("Hydration error:", err);
@@ -118,21 +132,21 @@ export default function Chat() {
   // Persist session
   useEffect(() => {
     if (!chatSessionKey) return;
-
-    const payload: StoredChatSession = {
-      conversationId,
-      profile,
-      messages: messages.map((m: any) => ({
-        ...m,
-        timestamp: m.timestamp.toISOString(),
-        tool_actions: m.tool_actions,
-      })),
-    };
-
-    sessionStorage.setItem(chatSessionKey, JSON.stringify(payload));
+    sessionStorage.setItem(
+      chatSessionKey,
+      JSON.stringify({
+        conversationId,
+        profile,
+        messages: messages.map((m) => ({
+          ...m,
+          timestamp: m.timestamp.toISOString(),
+          tool_actions: (m as any).tool_actions,
+        })),
+      })
+    );
   }, [messages, conversationId, profile, chatSessionKey]);
 
-  // Auto-scroll
+  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -142,17 +156,17 @@ export default function Chat() {
     if (!business || !readyToChat || !sessionHydratedRef.current) return;
     if (messages.length > 0) return;
 
-    const hours = business.working_hours || {};
+    const hours = business.working_hours;
     const day = Object.entries(hours).find(
-      ([, v]: any) => v?.open && v?.close
+      ([, v]) => v?.open && v?.close
     );
 
     let hoursText = "";
     if (day) {
-      const [d, v]: any = day;
+      const [d, v] = day;
       hoursText = `${d.charAt(0).toUpperCase() + d.slice(1)}: ${
-        v.open
-      } - ${v.close}`;
+        (v as any).open
+      } - ${(v as any).close}`;
     }
 
     setMessages([
@@ -163,17 +177,39 @@ export default function Chat() {
         }`,
         sender: "assistant",
         timestamp: new Date(),
-      } as any,
+      },
     ]);
   }, [business, readyToChat, messages.length, profile.name]);
+
+  const handleProfileSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profileDraft.name.trim()) {
+      setProfileError("Please enter your name to start chatting.");
+      return;
+    }
+    const normalized: ChatProfile = {
+      name: profileDraft.name.trim(),
+    };
+    if (profileDraft.email.trim()) {
+      normalized.email = profileDraft.email.trim();
+    }
+    setProfile(normalized);
+    setProfileError(null);
+    setProfileEditorOpen(false);
+  };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || loading || !id) return;
 
+    if (!readyToChat) {
+      setProfileEditorOpen(true);
+      setProfileError("Add your name to begin chatting.");
+      return;
+    }
+
     const msg = input.trim();
 
-    // Add user message to UI
     setMessages((prev) => [
       ...prev,
       {
@@ -181,7 +217,7 @@ export default function Chat() {
         text: msg,
         sender: "user",
         timestamp: new Date(),
-      } as any,
+      },
     ]);
 
     setInput("");
@@ -199,73 +235,25 @@ export default function Chat() {
         setConversationId(res.conversation_id);
       }
 
-      const replyText =
-        res.reply ?? "Sorry, I couldn’t generate a response. Please try again.";
-
-      const toolActions: any[] = (res as any).tool_actions || [];
-
-      // --- 7.2: detect booking intent or calendar tool use ---
-      const botReplyLower = (replyText || "").toLowerCase();
-      const bookingKeywords = [
-        "book",
-        "appointment",
-        "schedule",
-        "reserve",
-        "slot",
-        "meeting",
-      ];
-
-      const userAskedBooking = bookingKeywords.some((k) =>
-        msg.toLowerCase().includes(k)
-      );
-
-      const botMentionedBooking = bookingKeywords.some((k) =>
-        botReplyLower.includes(k)
-      );
-
-      const botUsedCalendarTool = toolActions.some(
-        (a) => a.tool === "calendar" && a.action === "create_event"
-      );
-
-      if ((userAskedBooking || botMentionedBooking) && !botUsedCalendarTool) {
-        setShowBookingModal(true);
-      }
-
-      const assistantMsg: any = {
-        id: (Date.now() + 1).toString(),
-        text: replyText,
-        sender: "assistant",
-        timestamp: new Date(),
-        tool_actions: toolActions,
-      };
-
-      if (botUsedCalendarTool) {
-        setMessages((prev) => [
-          ...prev,
-          assistantMsg,
-          {
-            id: (Date.now() + 2).toString(),
-            text: "Your appointment has been created successfully! 📅✨",
-            sender: "assistant",
-            timestamp: new Date(),
-          } as any,
-        ]);
-      } else {
-        setMessages((prev) => [...prev, assistantMsg]);
-      }
-    } catch (error) {
-      const detail = getApiErrorMessage(
-        error,
-        "Failed to send message. Please try again."
-      );
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          text: res.reply || "Error generating reply.",
+          sender: "assistant",
+          timestamp: new Date(),
+        },
+      ]);
+    } catch (err) {
+      console.error("Chat error:", err);
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now().toString(),
-          text: `Error: ${detail}`,
+          text: "Something went wrong. Try again.",
           sender: "assistant",
           timestamp: new Date(),
-        } as any,
+        },
       ]);
     } finally {
       setLoading(false);
@@ -283,24 +271,105 @@ export default function Chat() {
   return (
     <div className="max-w-4xl mx-auto">
       <div className="card flex flex-col h-[calc(100vh-200px)] min-h-[600px]">
+
         {/* Header */}
-        <div className="border-b p-4 bg-gray-50 flex justify-between items-center rounded-t-xl">
+        <div className="border-b p-4 bg-gray-50 flex flex-col md:flex-row md:items-center md:justify-between space-y-2 md:space-y-0">
           <div>
             <h2 className="text-xl font-semibold">Chat with {business.name}</h2>
             <p className="text-sm text-gray-600">
               {readyToChat
-                ? `You are chatting as ${profile.name}`
-                : "You can start chatting directly."}
+                ? `You are chatting as ${profile.name}${
+                    profile.email ? ` · ${profile.email}` : ""
+                  }`
+                : "Add your name so we can personalize the experience."}
             </p>
           </div>
 
-          <button
-            onClick={() => setShowBookingModal(true)}
-            className="text-sm text-primary-600 hover:text-primary-800"
-          >
-            📅 Book Appointment
-          </button>
+          <div className="flex space-x-3">
+            <button
+              type="button"
+              onClick={() => {
+                setProfileDraft({
+                  name: profile.name,
+                  email: profile.email ?? "",
+                });
+                setProfileEditorOpen(true);
+                setProfileError(null);
+              }}
+              className="text-sm text-primary-600 hover:text-primary-800 flex items-center space-x-1"
+            >
+              <Edit3 className="h-4 w-4" />
+              <span>{readyToChat ? "Edit profile" : "Add profile"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowBookingModal(true)}
+              className="text-sm text-primary-600 hover:text-primary-800 flex items-center"
+            >
+              📅 Book Appointment
+            </button>
+          </div>
         </div>
+
+        {/* Profile editor */}
+        {profileEditorOpen && (
+          <div className="border-b bg-white">
+            <form
+              onSubmit={handleProfileSubmit}
+              className="p-4 space-y-4"
+            >
+              {profileError && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                  {profileError}
+                </div>
+              )}
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Your name *
+                  </label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={profileDraft.name}
+                    onChange={(e) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        name: e.target.value,
+                      }))
+                    }
+                    placeholder="Jane Doe"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email (optional)
+                  </label>
+                  <input
+                    type="email"
+                    className="input"
+                    value={profileDraft.email}
+                    onChange={(e) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        email: e.target.value,
+                      }))
+                    }
+                    placeholder="jane@example.com"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2">
+                <button type="submit" className="btn btn-primary">
+                  Save profile
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {/* Booking Modal */}
         <BookingModal
@@ -308,7 +377,7 @@ export default function Chat() {
           onClose={() => setShowBookingModal(false)}
           business={business}
           profile={profile}
-          onSuccess={(appt: any) => {
+          onSuccess={(appt) => {
             setMessages((prev) => [
               ...prev,
               {
@@ -316,14 +385,14 @@ export default function Chat() {
                 sender: "assistant",
                 timestamp: new Date(),
                 text: `Your appointment is booked for ${appt.date} at ${appt.time} 🎉`,
-              } as any,
+              },
             ]);
           }}
         />
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4">
-          {messages.map((m: any) => (
+          {messages.map((m) => (
             <div
               key={m.id}
               className={`flex mb-4 ${
@@ -336,7 +405,7 @@ export default function Chat() {
                 className={`w-8 h-8 flex justify-center items-center rounded-full ${
                   m.sender === "user"
                     ? "bg-primary-600 text-white"
-                    : "bg-gray-200"
+                    : "bg-gray-200 text-gray-700"
                 }`}
               >
                 {m.sender === "user" ? (
@@ -350,27 +419,19 @@ export default function Chat() {
                 className={`p-3 rounded-lg max-w-[80%] break-words ${
                   m.sender === "user"
                     ? "bg-primary-600 text-white"
-                    : "bg-gray-100"
+                    : "bg-gray-100 border border-gray-200"
                 }`}
               >
                 {m.text}
-
-                {m.tool_actions &&
-                  m.tool_actions.map((t: any, i: number) => (
-                    <div
-                      key={i}
-                      className="mt-2 text-xs bg-white border px-2 py-1 rounded"
-                    >
-                      {t.action || t.tool}
-                    </div>
-                  ))}
               </div>
             </div>
           ))}
 
           {loading && (
             <div className="flex space-x-3">
-              <Bot className="h-5 w-5 text-gray-600" />
+              <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                <Bot className="h-4 w-4 text-gray-600" />
+              </div>
               <Loader2 className="h-6 w-6 animate-spin text-gray-600" />
             </div>
           )}
@@ -379,21 +440,24 @@ export default function Chat() {
         </div>
 
         {/* Input */}
-        <form onSubmit={handleSend} className="border-t p-4 bg-gray-50 rounded-b-xl">
+        <form onSubmit={handleSend} className="border-t p-4 bg-gray-50">
           <div className="flex space-x-2">
             <input
               ref={inputRef}
               type="text"
               className="input flex-1"
-              placeholder="Type your message..."
+              placeholder={
+                readyToChat
+                  ? "Type your message..."
+                  : "Add your name above to start chatting"
+              }
               value={input}
-              disabled={loading}
+              disabled={!readyToChat || loading}
               onChange={(e) => setInput(e.target.value)}
             />
-
             <button
               type="submit"
-              disabled={loading || !input.trim()}
+              disabled={!readyToChat || loading || !input.trim()}
               className="btn btn-primary flex items-center"
             >
               {loading ? (

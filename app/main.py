@@ -5,7 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 from app.database import init_db
-from app.routes import chat, business, tools
+from app.routes import chat, business, tools, appointments
+from app.routes.google_drive import router as google_drive_router
 
 # Configure structured logging
 structlog.configure(
@@ -48,6 +49,9 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(business.router)
 app.include_router(tools.router)
+app.include_router(appointments.router)
+app.include_router(google_drive_router)
+
 
 
 @app.on_event("startup")

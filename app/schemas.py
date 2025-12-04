@@ -110,16 +110,16 @@ class AppointmentCreate(BaseModel):
     time: str  # Format: HH:MM
 
 
-class AppointmentRequest(BaseModel):
-    """Schema for appointment request."""
-    business_id: int
-    customer_name: str
-    customer_email: Optional[EmailStr] = None
-    customer_phone: Optional[str] = None
-    preferred_date: str
-    preferred_time: str
-    service: Optional[str] = None
-    notes: Optional[str] = None
+# class AppointmentRequest(BaseModel):
+#     """Schema for appointment request."""
+#     business_id: int
+#     customer_name: str
+#     customer_email: Optional[EmailStr] = None
+#     customer_phone: Optional[str] = None
+#     preferred_date: str
+#     preferred_time: str
+#     service: Optional[str] = None
+#     notes: Optional[str] = None
 
 
 class AppointmentResponse(BaseModel):
@@ -128,10 +128,8 @@ class AppointmentResponse(BaseModel):
     business_id: int
     customer_name: str
     customer_email: Optional[str]
-    customer_phone: Optional[str]
-    appointment_date: datetime
-    service: Optional[str]
-    status: str
+    date:str
+    time: str
     created_at: datetime
 
     class Config:

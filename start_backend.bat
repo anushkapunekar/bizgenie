@@ -1,6 +1,0 @@
-@echo off
-echo Activating virtual environment...
-call venv\Scripts\activate.bat
-echo Starting BizGenie backend...
-uvicorn app.main:app --reload
-

@@ -1,0 +1,40 @@
+# Core Framework..
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# LangGraph & LLM
+langgraph==0.0.20
+langchain==0.1.6
+langchain-community==0.0.20
+langchain-huggingface==0.0.1
+
+# Free LLM Options:
+# - Ollama: Install from https://ollama.ai (runs locally, completely free)
+# - Hugging Face: Use free Inference API (no extra package needed)
+
+# RAG & Vector Store
+chromadb==0.4.22
+sentence-transformers>=2.6.0  # Free embeddings model (compatible with langchain-huggingface)
+
+# Document Processing
+pypdf2==3.0.1
+python-multipart==0.0.6
+
+# Supabase (optional - can use local storage)
+supabase==2.3.4
+
+# Utilities
+python-dotenv==1.0.0
+httpx>=0.24.0,<0.26.0  # Compatible with supabase
+python-jose[cryptography]==3.3.0
+
+# Logging & Monitoring
+structlog==24.1.0
+

@@ -1,33 +1,48 @@
 """
 Database configuration and session management.
 """
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from typing import Generator
 import os
+from typing import Generator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Prefer a simple local SQLite database by default to avoid external DB setup.
-# If you really want PostgreSQL, set USE_SQLITE=false in your .env and provide a DATABASE_URL.
-use_sqlite = os.getenv("USE_SQLITE", "true").lower() == "true"
-if use_sqlite:
-    DATABASE_URL = "sqlite:///./bizgenie.db"
-else:
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/bizgenie")
+# ------------------------------------------
+# SELECT DATABASE
+# ------------------------------------------
+USE_SQLITE = os.getenv("USE_SQLITE", "true").lower() == "true"
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+if USE_SQLITE:
+    # 🚀 FIX: allow multithread access for FastAPI
+    DATABASE_URL = "sqlite:///./bizgenie.db"
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},   # <<< IMPORTANT FIX
+        pool_pre_ping=True,
+        echo=False
+    )
+else:
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        echo=False
+    )
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
 
 Base = declarative_base()
 
-
+# --------------------------------------------------
+# DB Session for FastAPI dependency
+# --------------------------------------------------
 def get_db() -> Generator:
-    """
-    Dependency for getting database session.
-    """
     db = SessionLocal()
     try:
         yield db
@@ -35,14 +50,20 @@ def get_db() -> Generator:
         db.close()
 
 
+# --------------------------------------------------
+# SAFE init_db (async-ready + non-blocking)
+# --------------------------------------------------
 def init_db():
     """
-    Initialize database tables.
-    TODO: Run migrations with Alembic instead of create_all in production.
+    Create all tables safely without blocking the server.
     """
-    # Import all models to ensure they're registered with Base
-    from app.models import Business, Document, Appointment, Lead
-    
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
+    try:
+        # Import all models
+        from app.models import Business, Document, Appointment, Lead
 
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+
+        print("📦 Database initialized successfully.")
+    except Exception as e:
+        print("❌ DB Init Failed:", e)

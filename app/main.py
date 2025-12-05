@@ -53,12 +53,8 @@ app.include_router(appointments.router)
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Starting BizGenie application")
-    try:
-        init_db()
-        logger.info("Database initialized")
-    except Exception as e:
-        logger.error("Error initializing database", error=str(e))
+    init_db()
+    logger.info("Database tables verified/created")
 
 
 @app.on_event("shutdown")

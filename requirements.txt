@@ -1,9 +1,9 @@
 # Core Framework..
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.6.4
-pydantic-settings==2.1.0
-pydantic-core==2.14.6 --only-binary=:all:
+pydantic>=2.7,<3
+pydantic-settings>=2.1.0,<3
+
 
 
 # Database

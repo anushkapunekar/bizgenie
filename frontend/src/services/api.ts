@@ -6,6 +6,8 @@ import type {
   ChatRequest,
   ChatResponse,
   BusinessLoginPayload,
+  AppointmentPayload,
+  Appointment,
 } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -15,10 +17,9 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 60000, // 60 second timeout for LLM responses
+  timeout: 60000,
 });
 
-// Request logging
 api.interceptors.request.use(
   (config) => {
     console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
@@ -30,7 +31,6 @@ api.interceptors.request.use(
   }
 );
 
-// Response logging
 api.interceptors.response.use(
   (response) => {
     console.log(`API Response: ${response.status} ${response.config.url}`);
@@ -47,84 +47,75 @@ api.interceptors.response.use(
   }
 );
 
-// Business API
+// ------- Business API -------
+
 export const businessApi = {
   register: async (data: BusinessCreate): Promise<Business> => {
-    const response = await api.post<Business>("/business/register", data);
-    return response.data;
+    const res = await api.post<Business>("/business/register", data);
+    return res.data;
   },
 
   login: async (payload: BusinessLoginPayload): Promise<Business> => {
-    const response = await api.post<Business>("/business/login", payload);
-    return response.data;
+    const res = await api.post<Business>("/business/login", payload);
+    return res.data;
   },
 
   get: async (id: number): Promise<Business> => {
-    const response = await api.get<Business>(`/business/${id}`);
-    return response.data;
+    const res = await api.get<Business>(`/business/${id}`);
+    return res.data;
   },
 
-  update: async (
-    id: number,
-    data: Partial<BusinessCreate>
-  ): Promise<Business> => {
-    const response = await api.patch<Business>(`/business/update/${id}`, data);
-    return response.data;
+  update: async (id: number, data: Partial<BusinessCreate>): Promise<Business> => {
+    const res = await api.patch<Business>(`/business/update/${id}`, data);
+    return res.data;
   },
 
-  uploadDocument: async (
-    businessId: number,
-    file: File
-  ): Promise<Document> => {
+  uploadDocument: async (businessId: number, file: File): Promise<Document> => {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await api.post<Document>(
+
+    const res = await api.post<Document>(
       `/business/upload-docs?business_id=${businessId}`,
       formData,
       {
         headers: {
           "Content-Type": "multipart/form-data",
         },
-        timeout: 120000, // 2 minutes for file upload
+        timeout: 120000,
       }
     );
-    return response.data;
+    return res.data;
   },
 
   getDocuments: async (businessId: number): Promise<Document[]> => {
-    const response = await api.get<Document[]>(
-      `/business/${businessId}/documents`
-    );
-    return response.data;
+    const res = await api.get<Document[]>(`/business/${businessId}/documents`);
+    return res.data;
   },
 };
 
-// Chat API
+// ------- Chat API -------
+
 export const chatApi = {
   sendMessage: async (request: ChatRequest): Promise<ChatResponse> => {
-    const response = await api.post<ChatResponse>("/chat/", request);
-    return response.data;
+    const res = await api.post<ChatResponse>("/chat/", request);
+    return res.data;
   },
 };
 
-// Appointment API (Mode A: UI booking → backend)
+// ------- Appointments API -------
+
 export const appointmentsApi = {
-  create: async (payload: {
-    business_id: number;
-    customer_name: string;
-    customer_email?: string | null;
-    date: string;
-    time: string;
-  }) => {
-    const response = await api.post("/appointments/", payload);
-    return response.data;
+  create: async (payload: AppointmentPayload): Promise<Appointment> => {
+    const res = await api.post<Appointment>("/appointments/", payload);
+    return res.data;
   },
 };
 
-// Health check
+// ------- Health -------
+
 export const healthCheck = async (): Promise<{ status: string }> => {
-  const response = await api.get<{ status: string }>("/health");
-  return response.data;
+  const res = await api.get<{ status: string }>("/health");
+  return res.data;
 };
 
 export default api;

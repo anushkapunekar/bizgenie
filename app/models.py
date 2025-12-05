@@ -1,9 +1,10 @@
 """
 SQLAlchemy database models.
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from app.database import Base
 
 
@@ -14,25 +15,17 @@ class Business(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False, index=True)
     description = Column(Text, nullable=True)
-    services = Column(JSON, default=list)  # List of service names
-    working_hours = Column(JSON, default=dict)  # Dict with day: {open, close}
+    services = Column(JSON, default=list)  # list of service names
+    working_hours = Column(JSON, default=dict)  # { day: {open, close} }
     contact_email = Column(String(255), nullable=True)
     contact_phone = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-   
-    # Relationships
+
     documents = relationship("Document", back_populates="business", cascade="all, delete-orphan")
     appointments = relationship("Appointment", back_populates="business", cascade="all, delete-orphan")
     leads = relationship("Lead", back_populates="business", cascade="all, delete-orphan")
-    
-     # NEW: each business can have one Google Drive connection
-    google_drive_token = relationship(
-        "GoogleDriveToken",
-        back_populates="business",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
+
 
 class Document(Base):
     """Document model for storing business documents."""
@@ -41,12 +34,11 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
-    file_path = Column(String(500), nullable=False)  # Supabase URL or local path
+    file_path = Column(String(500), nullable=False)
     file_type = Column(String(50), default="pdf")
-    document_metadata = Column(JSON, default=dict)  # Additional metadata
+    document_metadata = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships
     business = relationship("Business", back_populates="documents")
 
 
@@ -56,50 +48,36 @@ class Appointment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+
     customer_name = Column(String(200), nullable=False)
     customer_email = Column(String(255), nullable=True)
     customer_phone = Column(String(50), nullable=True)
+
+    # Single datetime for the appointment
     appointment_date = Column(DateTime(timezone=True), nullable=False, index=True)
+
     service = Column(String(200), nullable=True)
-    status = Column(String(50), default="scheduled")  # pending, confirmed, cancelled, completed
+    status = Column(String(50), default="scheduled")  # scheduled / cancelled / completed / etc.
     notes = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships
     business = relationship("Business", back_populates="appointments")
 
 
 class Lead(Base):
-    """Lead model for tracking potential customers."""
+    """Lead model."""
     __tablename__ = "leads"
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+
     name = Column(String(200), nullable=False)
     email = Column(String(255), nullable=True, index=True)
     phone = Column(String(50), nullable=True, index=True)
-    source = Column(String(100), default="chat")  # chat, website, referral, etc.
+    source = Column(String(100), default="chat")
     notes = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships
     business = relationship("Business", back_populates="leads")
-
-    
-class GoogleDriveToken(Base):
-    """
-    Stores Google OAuth tokens per business for Drive sync.
-    """
-    __tablename__ = "google_drive_tokens"
-
-    id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, unique=True, index=True)
-
-    access_token = Column(Text, nullable=False)
-    refresh_token = Column(Text, nullable=True)
-    token_expiry = Column(DateTime(timezone=True), nullable=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    business = relationship("Business", back_populates="google_drive_token")

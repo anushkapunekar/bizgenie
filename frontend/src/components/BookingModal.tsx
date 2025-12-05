@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { appointmentsApi } from "../services/api";
+import type { Business, ChatProfile, Appointment } from "../types";
 
 interface BookingModalProps {
   open: boolean;
   onClose: () => void;
-  business: { id: number; name: string };
-  profile: { name: string; email?: string };
-  onSuccess: (appointment: any) => void;
+  business: Business;
+  profile: ChatProfile;
+  onSuccess: (appt: Appointment) => void;
 }
 
 export default function BookingModal({
@@ -28,7 +29,6 @@ export default function BookingModal({
     if (!date || !time) return;
 
     setLoading(true);
-
     try {
       const appt = await appointmentsApi.create({
         business_id: business.id,
@@ -41,8 +41,7 @@ export default function BookingModal({
       onSuccess(appt);
       onClose();
     } catch (err) {
-      console.error("Booking error:", err);
-      alert("Failed to book appointment. Please try again.");
+      alert("Failed to book appointment. Check backend logs.");
     } finally {
       setLoading(false);
     }
@@ -53,14 +52,10 @@ export default function BookingModal({
       <div className="bg-white w-full max-w-md rounded-xl shadow-lg p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">
-            Book an appointment at {business.name}
+            Book appointment at {business.name}
           </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-800"
-          >
-            <X className="h-5 w-5" />
+          <button onClick={onClose}>
+            <X className="h-5 w-5 text-gray-500 hover:text-gray-800" />
           </button>
         </div>
 

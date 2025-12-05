@@ -1,11 +1,10 @@
 """
-BizGenie RAG node (Mode A – no tools, no LangGraph).
+Resilient RAG node for BizGenie (NO external LLM).
 
 - Uses vector store when available
-- Falls back to business metadata if nothing is found
-- ALWAYS returns a plain text answer (no JSON)
+- Falls back to business metadata if vector store fails or finds nothing
+- ALWAYS returns a plain text answer
 """
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -18,7 +17,6 @@ logger = structlog.get_logger(__name__)
 
 
 def _format_documents(documents: List[Dict[str, Any]], limit: int = 3) -> str:
-    """Turn retrieved chunks into a readable block for the reply."""
     formatted: List[str] = []
     for idx, doc in enumerate(documents[:limit], start=1):
         text = (doc.get("text") or "").strip()
@@ -31,10 +29,6 @@ def _format_documents(documents: List[Dict[str, Any]], limit: int = 3) -> str:
 
 
 def _fallback_from_metadata(user_message: str, meta: Dict[str, Any]) -> str:
-    """
-    Fallback answer when there are no documents or vector store fails.
-    Uses only business metadata – no external LLM, no tools.
-    """
     name = meta.get("name") or "this business"
     description = meta.get("description") or ""
     services = meta.get("services") or []
@@ -44,7 +38,7 @@ def _fallback_from_metadata(user_message: str, meta: Dict[str, Any]) -> str:
 
     parts: List[str] = []
 
-    parts.append(f"Thanks for your message! Here's what I can tell you about {name}:")
+    parts.append(f"Thanks for your message! Here's what I can tell you about {name} right now:")
 
     if description:
         parts.append(f"\n• About us: {description}")
@@ -77,17 +71,11 @@ def _fallback_from_metadata(user_message: str, meta: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _build_answer_from_docs(
-    user_message: str,
-    meta: Dict[str, Any],
-    documents: List[Dict[str, Any]],
-) -> str:
-    """Build a human-friendly answer using retrieved documents only."""
+def _build_answer_from_docs(user_message: str, meta: Dict[str, Any], documents: List[Dict[str, Any]]) -> str:
     name = meta.get("name") or "this business"
     docs_block = _format_documents(documents)
 
     if not docs_block:
-        # No usable text inside docs → fallback purely to metadata
         return _fallback_from_metadata(user_message, meta)
 
     return (
@@ -104,17 +92,11 @@ def generate_answer(
     n_results: int = 5,
     metadata_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Main RAG routine (Mode A).
 
-    - NO external LLM.
-    - NO JSON tool calls.
-    - NEVER returns the generic 'I'm having trouble processing...' message.
-    """
     meta: Dict[str, Any] = metadata_context or {}
     documents: List[Dict[str, Any]] = []
 
-    # 1) Try vector store (safe)
+    # Vector store query
     try:
         documents = vector_store.query_documents(
             business_id=business_id,
@@ -131,7 +113,7 @@ def generate_answer(
         logger.error("rag.vectorstore_failed", error=str(exc))
         documents = []
 
-    # 2) Build answer from docs OR metadata
+    # Build answer
     if documents:
         reply = _build_answer_from_docs(user_message, meta, documents)
     else:

@@ -3,25 +3,24 @@ Pydantic schemas for request/response validation.
 """
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import Optional, List, Dict, Any
-from datetime import datetime, time
-from enum import Enum
+from datetime import datetime
 
+
+# ---------- BUSINESS ----------
 
 class BusinessCreate(BaseModel):
-    """Schema for business registration."""
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     services: List[str] = []
     working_hours: Dict[str, Dict[str, str]] = Field(
         default_factory=dict,
-        description="Format: {'monday': {'open': '09:00', 'close': '17:00'}, ...}"
+        description="{'monday': {'open': '09:00', 'close': '17:00'}, ...}",
     )
     contact_email: Optional[EmailStr] = None
     contact_phone: Optional[str] = None
 
 
 class BusinessUpdate(BaseModel):
-    """Schema for business profile updates."""
     name: Optional[str] = None
     description: Optional[str] = None
     services: Optional[List[str]] = None
@@ -31,7 +30,6 @@ class BusinessUpdate(BaseModel):
 
 
 class BusinessLoginRequest(BaseModel):
-    """Schema for logging into an existing business profile."""
     business_id: Optional[int] = None
     contact_email: Optional[EmailStr] = None
     contact_phone: Optional[str] = None
@@ -40,7 +38,8 @@ class BusinessLoginRequest(BaseModel):
     @model_validator(mode="after")
     def validate_identifier(self) -> "BusinessLoginRequest":
         if not any(
-            getattr(self, field) for field in ("business_id", "contact_email", "contact_phone", "name")
+            getattr(self, field)
+            for field in ("business_id", "contact_email", "contact_phone", "name")
         ):
             raise ValueError(
                 "At least one identifier (business_id, contact_email, contact_phone, or name) is required."
@@ -49,7 +48,6 @@ class BusinessLoginRequest(BaseModel):
 
 
 class BusinessResponse(BaseModel):
-    """Schema for business response."""
     id: int
     name: str
     description: Optional[str]
@@ -64,8 +62,9 @@ class BusinessResponse(BaseModel):
         from_attributes = True
 
 
+# ---------- DOCUMENTS ----------
+
 class DocumentUpload(BaseModel):
-    """Schema for document upload."""
     business_id: int
     filename: str
     file_type: str = "pdf"
@@ -73,7 +72,6 @@ class DocumentUpload(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """Schema for document response."""
     id: int
     business_id: int
     filename: str
@@ -86,8 +84,9 @@ class DocumentResponse(BaseModel):
         from_attributes = True
 
 
+# ---------- CHAT ----------
+
 class ChatRequest(BaseModel):
-    """Schema for chat request."""
     business_id: int
     user_name: str = Field(..., min_length=1)
     user_message: str = Field(..., min_length=1)
@@ -95,49 +94,40 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Schema for chat response."""
     reply: str
     tool_actions: List[Dict[str, Any]] = Field(default_factory=list)
     conversation_id: str
     intent: Optional[str] = None
 
 
+# ---------- APPOINTMENTS ----------
+
 class AppointmentCreate(BaseModel):
     business_id: int
     customer_name: str
-    customer_email: str | None = None
-    date: str  # Format: YYYY-MM-DD
-    time: str  # Format: HH:MM
-
-
-# class AppointmentRequest(BaseModel):
-#     """Schema for appointment request."""
-#     business_id: int
-#     customer_name: str
-#     customer_email: Optional[EmailStr] = None
-#     customer_phone: Optional[str] = None
-#     preferred_date: str
-#     preferred_time: str
-#     service: Optional[str] = None
-#     notes: Optional[str] = None
+    customer_email: Optional[str] = None
+    date: str  # YYYY-MM-DD
+    time: str  # HH:MM
 
 
 class AppointmentResponse(BaseModel):
-    """Schema for appointment response."""
     id: int
     business_id: int
     customer_name: str
     customer_email: Optional[str]
-    date:str
-    time: str
+    customer_phone: Optional[str]
+    appointment_date: datetime
+    service: Optional[str]
+    status: str
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
+# ---------- LEADS ----------
+
 class LeadCreate(BaseModel):
-    """Schema for lead creation."""
     business_id: int
     name: str
     email: Optional[EmailStr] = None
@@ -147,7 +137,6 @@ class LeadCreate(BaseModel):
 
 
 class LeadResponse(BaseModel):
-    """Schema for lead response."""
     id: int
     business_id: int
     name: str
@@ -159,6 +148,4 @@ class LeadResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        orm_mode =True
-        
-
+        orm_mode = True

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Send, Bot, User, Loader2, Edit3 } from "lucide-react";
+
 import { chatApi, businessApi } from "../services/api";
 import type { Message, Business, ChatProfile } from "../types";
+import { getApiErrorMessage } from "../utils/errors";
 import BookingModal from "../components/BookingModal";
 
 const CHAT_PROFILE_STORAGE_KEY = "bizgenie.chatProfile";
@@ -12,10 +14,7 @@ const getStoredProfile = (): ChatProfile => {
     const raw = localStorage.getItem(CHAT_PROFILE_STORAGE_KEY);
     if (!raw) return { name: "" };
     const parsed = JSON.parse(raw);
-    return {
-      name: parsed.name || "",
-      email: parsed.email || "",
-    };
+    return { name: parsed.name || "", email: parsed.email || "" };
   } catch {
     return { name: "" };
   }
@@ -55,10 +54,12 @@ export default function Chat() {
 
   const initialProfile = useMemo(() => getStoredProfile(), []);
   const [profile, setProfile] = useState<ChatProfile>(initialProfile);
+
   const [profileDraft, setProfileDraft] = useState({
     name: initialProfile.name,
     email: initialProfile.email ?? "",
   });
+
   const [profileEditorOpen, setProfileEditorOpen] = useState(
     () => !initialProfile.name
   );
@@ -129,24 +130,22 @@ export default function Chat() {
     sessionHydratedRef.current = true;
   }, [chatSessionKey]);
 
-  // Persist session
   useEffect(() => {
     if (!chatSessionKey) return;
-    sessionStorage.setItem(
-      chatSessionKey,
-      JSON.stringify({
-        conversationId,
-        profile,
-        messages: messages.map((m) => ({
-          ...m,
-          timestamp: m.timestamp.toISOString(),
-          tool_actions: (m as any).tool_actions,
-        })),
-      })
-    );
+
+    const payload: StoredChatSession = {
+      conversationId,
+      profile,
+      messages: messages.map((m) => ({
+        ...m,
+        timestamp: m.timestamp.toISOString(),
+        tool_actions: (m as any).tool_actions,
+      })),
+    };
+
+    sessionStorage.setItem(chatSessionKey, JSON.stringify(payload));
   }, [messages, conversationId, profile, chatSessionKey]);
 
-  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -165,8 +164,8 @@ export default function Chat() {
     if (day) {
       const [d, v] = day;
       hoursText = `${d.charAt(0).toUpperCase() + d.slice(1)}: ${
-        (v as any).open
-      } - ${(v as any).close}`;
+        v.open
+      } - ${v.close}`;
     }
 
     setMessages([
@@ -181,19 +180,35 @@ export default function Chat() {
     ]);
   }, [business, readyToChat, messages.length, profile.name]);
 
-  const handleProfileSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleProfileSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
     if (!profileDraft.name.trim()) {
       setProfileError("Please enter your name to start chatting.");
       return;
     }
+
     const normalized: ChatProfile = {
       name: profileDraft.name.trim(),
     };
     if (profileDraft.email.trim()) {
       normalized.email = profileDraft.email.trim();
     }
+
     setProfile(normalized);
+    setProfileDraft({
+      name: normalized.name,
+      email: normalized.email ?? "",
+    });
+    setProfileError(null);
+    setProfileEditorOpen(false);
+  };
+
+  const handleProfileCancel = () => {
+    if (!readyToChat) return;
+    setProfileDraft({
+      name: profile.name,
+      email: profile.email ?? "",
+    });
     setProfileError(null);
     setProfileEditorOpen(false);
   };
@@ -208,13 +223,13 @@ export default function Chat() {
       return;
     }
 
-    const msg = input.trim();
+    const msgText = input.trim();
 
     setMessages((prev) => [
       ...prev,
       {
         id: Date.now().toString(),
-        text: msg,
+        text: msgText,
         sender: "user",
         timestamp: new Date(),
       },
@@ -227,7 +242,7 @@ export default function Chat() {
       const res = await chatApi.sendMessage({
         business_id: Number(id),
         user_name: profile.name,
-        user_message: msg,
+        user_message: msgText,
         conversation_id: conversationId || undefined,
       });
 
@@ -242,15 +257,19 @@ export default function Chat() {
           text: res.reply || "Error generating reply.",
           sender: "assistant",
           timestamp: new Date(),
+          tool_actions: res.tool_actions,
         },
       ]);
     } catch (err) {
-      console.error("Chat error:", err);
+      const detail = getApiErrorMessage(
+        err,
+        "Failed to send message. Please try again."
+      );
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now().toString(),
-          text: "Something went wrong. Try again.",
+          text: `Error: ${detail}`,
           sender: "assistant",
           timestamp: new Date(),
         },
@@ -269,14 +288,14 @@ export default function Chat() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="card flex flex-col h-[calc(100vh-200px)] min-h-[600px]">
+    <div className="w-full flex justify-center px-2 md:px-4 lg:px-6">
+      <div className="w-full max-w-3xl bg-white rounded-xl shadow-md flex flex-col h-[calc(100vh-180px)]">
 
         {/* Header */}
         <div className="border-b p-4 bg-gray-50 flex flex-col md:flex-row md:items-center md:justify-between space-y-2 md:space-y-0">
           <div>
             <h2 className="text-xl font-semibold">Chat with {business.name}</h2>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 mt-1">
               {readyToChat
                 ? `You are chatting as ${profile.name}${
                     profile.email ? ` · ${profile.email}` : ""
@@ -296,7 +315,7 @@ export default function Chat() {
                 setProfileEditorOpen(true);
                 setProfileError(null);
               }}
-              className="text-sm text-primary-600 hover:text-primary-800 flex items-center space-x-1"
+              className="text-sm text-primary-600 flex items-center space-x-1 hover:text-primary-800"
             >
               <Edit3 className="h-4 w-4" />
               <span>{readyToChat ? "Edit profile" : "Add profile"}</span>
@@ -305,7 +324,7 @@ export default function Chat() {
             <button
               type="button"
               onClick={() => setShowBookingModal(true)}
-              className="text-sm text-primary-600 hover:text-primary-800 flex items-center"
+              className="text-sm text-primary-600 flex items-center hover:text-primary-800"
             >
               📅 Book Appointment
             </button>
@@ -314,11 +333,8 @@ export default function Chat() {
 
         {/* Profile editor */}
         {profileEditorOpen && (
-          <div className="border-b bg-white">
-            <form
-              onSubmit={handleProfileSubmit}
-              className="p-4 space-y-4"
-            >
+          <div className="border-b border-gray-200 bg-white">
+            <form onSubmit={handleProfileSubmit} className="p-4 space-y-4">
               {profileError && (
                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
                   {profileError}
@@ -343,6 +359,7 @@ export default function Chat() {
                     placeholder="Jane Doe"
                   />
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Email (optional)
@@ -363,6 +380,15 @@ export default function Chat() {
               </div>
 
               <div className="flex justify-end space-x-2">
+                {readyToChat && (
+                  <button
+                    type="button"
+                    onClick={handleProfileCancel}
+                    className="btn btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                )}
                 <button type="submit" className="btn btn-primary">
                   Save profile
                 </button>
@@ -384,14 +410,16 @@ export default function Chat() {
                 id: Date.now().toString(),
                 sender: "assistant",
                 timestamp: new Date(),
-                text: `Your appointment is booked for ${appt.date} at ${appt.time} 🎉`,
+                text: `Your appointment is booked for ${
+                  appt.appointment_date.split("T")[0]
+                } at ${appt.appointment_date.substring(11, 16)} 🎉`,
               },
             ]);
           }}
         />
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6 space-y-4">
           {messages.map((m) => (
             <div
               key={m.id}
@@ -416,10 +444,10 @@ export default function Chat() {
               </div>
 
               <div
-                className={`p-3 rounded-lg max-w-[80%] break-words ${
+                className={`px-4 py-2 rounded-lg max-w-[85%] md:max-w-[75%] break-words ${
                   m.sender === "user"
-                    ? "bg-primary-600 text-white"
-                    : "bg-gray-100 border border-gray-200"
+                    ? "bg-primary-600 text-white self-end"
+                    : "bg-gray-100 text-gray-900"
                 }`}
               >
                 {m.text}
@@ -428,11 +456,11 @@ export default function Chat() {
           ))}
 
           {loading && (
-            <div className="flex space-x-3">
+            <div className="flex items-center space-x-3">
               <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
                 <Bot className="h-4 w-4 text-gray-600" />
               </div>
-              <Loader2 className="h-6 w-6 animate-spin text-gray-600" />
+              <Loader2 className="animate-spin h-6 w-6 text-gray-600" />
             </div>
           )}
 
@@ -440,7 +468,7 @@ export default function Chat() {
         </div>
 
         {/* Input */}
-        <form onSubmit={handleSend} className="border-t p-4 bg-gray-50">
+        <form onSubmit={handleSend} className="border-t px-3 py-4 bg-gray-50 flex items-center space-x-2 md:px-6">
           <div className="flex space-x-2">
             <input
               ref={inputRef}
@@ -455,6 +483,7 @@ export default function Chat() {
               disabled={!readyToChat || loading}
               onChange={(e) => setInput(e.target.value)}
             />
+
             <button
               type="submit"
               disabled={!readyToChat || loading || !input.trim()}

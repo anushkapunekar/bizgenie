@@ -18,24 +18,21 @@ async def create_appointment(payload: AppointmentCreate, db: Session = Depends(g
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
 
-    # ---------------------------------------
-    # 1) Combine date + time → datetime object
-    # ---------------------------------------
+    # 1) Build appointment datetime
     try:
         appt_dt = datetime.strptime(f"{payload.date} {payload.time}", "%Y-%m-%d %H:%M")
-    except:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid date/time format")
 
-    # ---------------------------------------
-    # 2) Save appointment correctly
-    # ---------------------------------------
+    # 2) Save appointment in DB
     appt = Appointment(
         business_id=payload.business_id,
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
+        customer_phone=None,
         appointment_date=appt_dt,
         service=None,
-        customer_phone=None,
+        status="scheduled",
         notes=None,
     )
 
@@ -43,53 +40,31 @@ async def create_appointment(payload: AppointmentCreate, db: Session = Depends(g
     db.commit()
     db.refresh(appt)
 
-    # ---------------------------------------
-    # 3) Send email confirmation (customer)
-    # ---------------------------------------
+    # 3) Customer confirmation email
     if payload.customer_email:
         try:
             await send_email(
                 to=payload.customer_email,
                 subject="Appointment Confirmed",
-                body=(
-                    f"Your appointment with {business.name} is booked for "
-                    f"{appt_dt.strftime('%Y-%m-%d at %H:%M')}."
-                )
+                body=f"Your appointment with {business.name} is booked on {payload.date} at {payload.time}.",
             )
         except Exception as exc:
-            print("Email sending failed:", exc)
+            print("Customer email failed:", exc)
 
-    # ---------------------------------------
-    # 4) Add to Google Calendar (business)
-    # ---------------------------------------
+    # 4) Calendar helper (email-based)
     try:
-        start_iso = appt_dt.isoformat()
-        end_iso = (appt_dt + timedelta(hours=1)).isoformat()
-
+        end_dt = appt_dt + timedelta(hours=1)
         await create_event(
             title=f"Appointment - {payload.customer_name}",
-            description=f"Online booking for {business.name}",
-            start_dt=start_iso,
-            end_dt=end_iso,
+            description=f"Online booking via BizGenie for {business.name}",
+            start_dt=appt_dt.isoformat(),
+            end_dt=end_dt.isoformat(),
             location=None,
             attendees_emails=[payload.customer_email] if payload.customer_email else [],
             send_via_email=True,
             send_via_whatsapp=False,
         )
     except Exception as exc:
-        print("Calendar event failed:", exc)
+        print("Calendar helper failed:", exc)
 
-    # ---------------------------------------
-    # 5) RETURN correct AppointmentResponse
-    # ---------------------------------------
-    return AppointmentResponse(
-        id=appt.id,
-        business_id=appt.business_id,
-        customer_name=appt.customer_name,
-        customer_email=appt.customer_email,
-        customer_phone=appt.customer_phone,
-        appointment_date=appt.appointment_date,
-        service=appt.service,
-        status=appt.status,
-        created_at=appt.created_at,
-    )
+    return appt

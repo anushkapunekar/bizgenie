@@ -22,7 +22,7 @@ pypdf2==3.0.1
 python-multipart==0.0.6
 
 # Email
-aiosmtplib==2.4.0
+aiosmtplib==2.0.2
 
 # Supabase
 supabase==2.3.4

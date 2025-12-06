@@ -12,17 +12,17 @@ alembic==1.13.1
 # LangGraph
 langgraph==0.2.66
 
-# RAG & Vector Store
+# RAG & Vector Store (Windows-safe)
 chromadb==0.4.15
-sentence-transformers>=2.6.0
 numpy<2.0.0
+sentence-transformers>=2.6.0
 
 # Document Processing
 pypdf2==3.0.1
 python-multipart==0.0.6
 
 # Email
-aiosmtplib==2.0.2
+aiosmtplib==2.4.0
 
 # Supabase
 supabase==2.3.4

@@ -2,6 +2,33 @@ services:
   - type: web
     name: bizgenie-backend
     env: python
-    runtime: python-3.11
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    plan: free
+    region: singapore
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: USE_SQLITE
+        value: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bizgenie-db
+          property: connectionString
+      - key: HF_API_KEY
+        sync: false
+      - key: HF_MODEL
+        value: Qwen/Qwen2.5-7B-Instruct
+      - key: EMAIL_USERNAME
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+databases:
+  - name: bizgenie-db
+    plan: free
+    region: singapore

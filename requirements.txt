@@ -15,7 +15,7 @@ langchain==0.1.12
 langchain-community==0.0.33
 langchain-huggingface==0.0.2
 
-# RAG / Vector Store
+# Vector Store / RAG
 chromadb==0.5.0
 sentence-transformers==2.2.2
 
@@ -23,10 +23,10 @@ sentence-transformers==2.2.2
 pypdf2==3.0.1
 python-multipart==0.0.6
 
-# Supabase (optional)
+# Supabase
 supabase==2.3.4
 
-# Tools
+# Tools & Utils
 python-dotenv==1.0.1
 httpx>=0.24.0,<0.26.0
 python-jose[cryptography]==3.3.0

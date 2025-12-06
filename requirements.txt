@@ -13,7 +13,7 @@ alembic==1.13.1
 langgraph==0.2.66
 
 # RAG & Vector Store
-chromadb==0.4.22
+chromadb==0.4.15
 sentence-transformers>=2.6.0
 numpy<2.0.0
 

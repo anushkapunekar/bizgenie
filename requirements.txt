@@ -9,10 +9,8 @@ sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
 
-# LangGraph & LLM
+# LangGraph (NO langchain needed)
 langgraph==0.2.66
-langchain-core==0.3.80
-langchain-huggingface==0.0.1
 
 # RAG & Vector Store
 chromadb==0.4.22
@@ -29,4 +27,6 @@ supabase==2.3.4
 python-dotenv==1.0.0
 httpx>=0.24.0,<0.26.0
 python-jose[cryptography]==3.3.0
+
+# Logging
 structlog==24.1.0

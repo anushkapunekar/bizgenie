@@ -9,18 +9,22 @@ sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
 
-# LangGraph (NO langchain needed)
+# LangGraph
 langgraph==0.2.66
 
 # RAG & Vector Store
 chromadb==0.4.22
 sentence-transformers>=2.6.0
+numpy<2.0.0
 
 # Document Processing
 pypdf2==3.0.1
 python-multipart==0.0.6
 
-# Supabase (optional)
+# Email
+aiosmtplib==2.4.0
+
+# Supabase
 supabase==2.3.4
 
 # Utilities
@@ -30,4 +34,3 @@ python-jose[cryptography]==3.3.0
 
 # Logging
 structlog==24.1.0
-email-validator>=2.1.0

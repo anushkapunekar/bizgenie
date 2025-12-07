@@ -8,7 +8,6 @@ import {
   Mail,
   Phone,
   Clock,
-  Link2,
   Copy,
   CheckCircle,
 } from "lucide-react";

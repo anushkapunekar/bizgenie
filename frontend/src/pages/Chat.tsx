@@ -32,7 +32,7 @@ interface StoredMessage {
   text: string;
   sender: "user" | "assistant";
   timestamp: string;
-  intent?: string;
+  intent?: string | null;
   tool_actions?: any[];
 }
 

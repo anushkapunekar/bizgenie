@@ -32,8 +32,23 @@ class VectorStore:
 
     def __init__(self) -> None:
         self.client = None
-        self.embedding_model = None
         self.mode: str = "simple"
+
+        # Lazy embedding model: do NOT import or load at startup
+        self.embedding_model = None
+        self.embedding_model_name: Optional[str] = os.getenv(
+            "EMBEDDING_MODEL", "all-MiniLM-L6-v2"
+        )
+
+        # If user explicitly disables embeddings → never even try to import
+        if self.embedding_model_name and self.embedding_model_name.lower() == "none":
+            logger.warning(
+                "Embeddings disabled via config (EMBEDDING_MODEL=none). "
+                "RAG will fall back to keyword / simple similarity."
+            )
+            self.embedding_model_name = None
+
+        # Simple JSON-based fallback store directory
         self.simple_dir = Path(os.getenv("SIMPLE_VECTOR_DIR", "./storage/vector_cache"))
         _ensure_dir(self.simple_dir)
 
@@ -62,28 +77,39 @@ class VectorStore:
             self.client = None
             self.mode = "simple"
 
-        # ------------------------
-        # Load embedding model
-        # ------------------------
+    # ------------------------------------------------------------------
+    # Lazy embedding model loader
+    # ------------------------------------------------------------------
+    def _ensure_embedding_model(self) -> None:
+        """
+        Lazily import and load sentence-transformers only when needed.
+        If EMBEDDING_MODEL was disabled or loading fails, we stick to
+        keyword / simple search.
+        """
+        # Already loaded or explicitly disabled
+        if self.embedding_model is not None or self.embedding_model_name is None:
+            return
+
         try:
-            from sentence_transformers import SentenceTransformer
+            from sentence_transformers import SentenceTransformer  # type: ignore
 
-            embedding_model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-
-            # Disable embeddings if set to "none"
-            if embedding_model_name.lower() == "none":
-                self.embedding_model = None
-                logger.warning("Embeddings disabled via config (EMBEDDING_MODEL=none)")
-            else:
-                self.embedding_model = SentenceTransformer(embedding_model_name)
-                logger.info("Embeddings model loaded", model=embedding_model_name)
-
+            logger.info(
+                "Loading embeddings model lazily",
+                model=self.embedding_model_name,
+            )
+            self.embedding_model = SentenceTransformer(self.embedding_model_name)
+            logger.info(
+                "Embeddings model loaded successfully",
+                model=self.embedding_model_name,
+            )
         except Exception as e:
             logger.warning(
-                "sentence-transformers unavailable; RAG will use text-only search",
+                "Failed to load sentence-transformers; RAG will use text-only search",
                 error=str(e),
             )
+            # Disable further attempts
             self.embedding_model = None
+            self.embedding_model_name = None
 
     # ------------------------------------------------------------------
     # Helper for adding a single PDF (bytes) – used by Google Drive sync
@@ -165,8 +191,15 @@ class VectorStore:
             json.dump(data, fh)
 
     def _embed_texts(self, texts: List[str]) -> Optional[np.ndarray]:
-        if not texts or not self.embedding_model:
+        if not texts:
             return None
+
+        # Lazily load the embedding model, if allowed
+        self._ensure_embedding_model()
+
+        if not self.embedding_model:
+            return None
+
         try:
             return np.asarray(self.embedding_model.encode(texts, show_progress_bar=False))
         except Exception as e:
@@ -225,7 +258,7 @@ class VectorStore:
         try:
             collection = self.get_collection(business_id)
 
-            if self.embedding_model and not embeddings:
+            if not embeddings:
                 embeddings_np = self._embed_texts(texts)
                 embeddings = embeddings_np.tolist() if embeddings_np is not None else None
 
@@ -302,10 +335,9 @@ class VectorStore:
             collection = self.get_collection(business_id)
 
             query_embedding = None
-            if self.embedding_model:
-                q = self._embed_texts([query])
-                if q is not None:
-                    query_embedding = q.tolist()[0]
+            q_np = self._embed_texts([query])
+            if q_np is not None:
+                query_embedding = q_np.tolist()[0]
 
             if query_embedding:
                 results = collection.query(
@@ -346,7 +378,7 @@ class VectorStore:
         metas = [entry.get("metadata", {}) for entry in entries]
 
         # Keyword search fallback
-        if embeddings.size == 0 or not self.embedding_model:
+        if embeddings.size == 0:
             results = []
             query_lower = query.lower()
             for text, meta in zip(texts, metas):

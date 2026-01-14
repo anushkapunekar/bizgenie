@@ -2,7 +2,7 @@
 
 A micro-SaaS small-business support AI agent built with FastAPI, LangGraph, and ChromaDB.
 
-## 🚀 Features
+##  Features
 
 - **AI-Powered Chat Agent**: LangGraph-based agent that intelligently routes and responds to customer queries
 - **RAG (Retrieval-Augmented Generation)**: Document-based Q&A using ChromaDB vector store
@@ -11,7 +11,7 @@ A micro-SaaS small-business support AI agent built with FastAPI, LangGraph, and 
 - **PostgreSQL Database**: Robust data persistence with SQLAlchemy ORM
 - **Document Storage**: Local storage or Supabase integration for document files
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 bizgenie/
@@ -51,7 +51,7 @@ bizgenie/
 │── .env.example
 ```
 
-## 🛠️ Installation
+##  Installation
 
 ### Prerequisites
 
@@ -154,7 +154,7 @@ bizgenie/
 
 3. **Open Browser**: Navigate to `http://localhost:3000`
 
-## 📚 API Usage
+## API Usage
 
 ### 1. Register a Business
 
@@ -228,7 +228,7 @@ Content-Type: application/json
 }
 ```
 
-## 🔄 Agent Flow
+##  Agent Flow
 
 The LangGraph agent follows this flow:
 
@@ -240,7 +240,7 @@ The LangGraph agent follows this flow:
    - **Tools Executor Node**: Executes MCP tools (WhatsApp, Email, Calendar)
 3. **Response**: Returns formatted reply with any tool actions
 
-## 📄 Document Ingestion
+##  Document Ingestion
 
 Documents are processed as follows:
 
@@ -264,7 +264,7 @@ ingest_document(
 )
 ```
 
-## 🗄️ Database Schema
+##  Database Schema
 
 ### Business
 - `id`: Primary key
@@ -301,7 +301,7 @@ ingest_document(
 - `notes`: Lead notes
 - `created_at`: Timestamp
 
-## 🔧 MCP Tools
+## MCP Tools
 
 ### WhatsApp Tool
 - **Function**: `send_whatsapp_message(to, message)`
@@ -319,7 +319,7 @@ ingest_document(
   - `generate_appointment_confirmation(appointment_id)`
 - **Status**: Functional with database integration
 
-## 🧪 Testing
+##  Testing
 
 ```bash
 # Test health endpoint
@@ -336,7 +336,7 @@ curl -X POST http://localhost:8000/chat/ \
   -d '{"business_id": 1, "user_name": "Test User", "user_message": "Hello"}'
 ```
 
-## 📝 TODO / Future Enhancements
+##  TODO / Future Enhancements
 
 - [ ] Set up Alembic for database migrations
 - [x] Use free embeddings (sentence-transformers) ✅
@@ -355,7 +355,7 @@ curl -X POST http://localhost:8000/chat/ \
 - [ ] Implement async email sending
 - [ ] Add monitoring and logging dashboard
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Database Connection Issues
 - Verify PostgreSQL is running
@@ -370,11 +370,11 @@ curl -X POST http://localhost:8000/chat/ \
 - Ensure virtual environment is activated
 - Reinstall dependencies: `pip install -r requirements.txt`
 
-## 📄 License
+##  License
 
 This project is provided as-is for development purposes.
 
-## 🤝 Contributing
+##  Contributing
 
 This is a template project. Feel free to customize and extend as needed.
 
